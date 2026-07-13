@@ -13,6 +13,7 @@ import { fmtMs, fmtTime, findActiveLine } from '@/lib/lrc';
 import { isTitleMatch, findBestMatch } from '@/lib/match';
 import { useSongData } from '@/hooks/useSongData';
 import { useSpotifySync } from '@/hooks/useSpotifySync';
+import { extractMaterialCoverPalette, type CoverPalette } from '@/lib/cover-color';
 import type { SyncRefs } from '@/hooks/useSpotifySync';
 
 /** Reusable button class builder */
@@ -22,8 +23,8 @@ function btnCls(active?: boolean, variant?: 'danger') {
   const colors = variant === 'danger'
     ? 'text-[var(--destructive)] bg-[var(--destructive)]/10 hover:bg-[var(--destructive)]/20'
     : active
-      ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
-      : 'text-[var(--muted-foreground)] bg-[var(--accent)] hover:text-[var(--foreground)]';
+      ? 'song-accent-button song-accent-button--active'
+      : 'song-accent-button';
   return `${base} ${size} ${colors}`;
 }
 
@@ -32,8 +33,8 @@ function btnTextCls(active?: boolean, variant?: 'danger') {
   const colors = variant === 'danger'
     ? 'text-[var(--destructive)] bg-[var(--destructive)]/10 hover:bg-[var(--destructive)]/20'
     : active
-      ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
-      : 'text-[var(--muted-foreground)] bg-[var(--accent)] hover:text-[var(--foreground)] hover:bg-[var(--muted)]';
+      ? 'song-accent-button song-accent-button--active'
+      : 'song-accent-button';
   return `${base} ${colors}`;
 }
 
@@ -123,9 +124,27 @@ export default function SongViewPage() {
 
   // Album cover
   const [coverUrl, setCoverUrl] = useState<string | null>(null);
+  const [coverColor, setCoverColor] = useState<CoverPalette | null>(null);
   useEffect(() => {
     if (data.song?.cover_url) setCoverUrl(data.song.cover_url);
   }, [data.song?.cover_url]);
+  useEffect(() => {
+    if (!coverUrl) {
+      setCoverColor(null);
+      return;
+    }
+
+    let cancelled = false;
+    const image = new Image();
+    image.crossOrigin = 'anonymous';
+    image.onload = () => {
+      const color = extractMaterialCoverPalette(image);
+      if (!cancelled) setCoverColor(color);
+    };
+    image.onerror = () => { if (!cancelled) setCoverColor(null); };
+    image.src = coverUrl;
+    return () => { cancelled = true; };
+  }, [coverUrl]);
   useEffect(() => {
     if (!id || !currentUserEmail || !spotifyConnected || coverUrl) return;
     fetch(`/api/songs/${id}/cover`)
@@ -137,6 +156,18 @@ export default function SongViewPage() {
       .then((url) => { if (url) setCoverUrl(url); })
       .catch(() => {});
   }, [id, currentUserEmail, spotifyConnected, coverUrl]);
+  // Tint the viewport itself, not only the content column. The 4% mix keeps the
+  // current light/dark theme dominant while giving the page a cover-derived cast.
+  useEffect(() => {
+    if (!coverColor) return;
+    const accent = `rgb(${coverColor.primary.r} ${coverColor.primary.g} ${coverColor.primary.b})`;
+    document.body.style.setProperty('--song-page-accent', accent);
+    document.body.classList.add('song-page-themed');
+    return () => {
+      document.body.classList.remove('song-page-themed');
+      document.body.style.removeProperty('--song-page-accent');
+    };
+  }, [coverColor]);
 
   if (data.loading) {
     return (
@@ -197,9 +228,18 @@ export default function SongViewPage() {
   const playingMatch = spotify?.track && !isSameSong
     ? findBestMatch(data.allSongs.filter((s) => s.id !== id), spotify.track, currentUserEmail)
     : null;
+  const songThemeStyle = coverColor
+    ? { ['--song-accent' as string]: `rgb(${coverColor.primary.r} ${coverColor.primary.g} ${coverColor.primary.b})` }
+    : undefined;
+  const lyricPanelStyle = coverColor
+    ? {
+        ['--lyric-accent' as string]: `rgb(${coverColor.primary.r} ${coverColor.primary.g} ${coverColor.primary.b})`,
+        ['--lyric-orbit-accent' as string]: `rgb(${coverColor.secondary.r} ${coverColor.secondary.g} ${coverColor.secondary.b})`,
+      }
+    : undefined;
 
   return (
-    <div className="fade-in flex flex-col h-[calc(100dvh-2.75rem)] pb-24 overflow-hidden sm:block sm:h-auto sm:pb-0">
+    <div className="song-view fade-in flex flex-col h-[calc(100dvh-2.75rem)] pb-24 overflow-visible sm:block sm:h-auto sm:pb-0" style={songThemeStyle}>
       {/* Breadcrumb */}
       <div className="shrink-0 mb-3 sm:mb-8 flex items-center gap-1.5 text-xs text-[var(--muted-foreground)]">
         <button onClick={() => transitionRouter.push('/')} className="hover:text-[var(--foreground)] transition-colors inline-flex items-center gap-1">
@@ -301,7 +341,7 @@ export default function SongViewPage() {
           </div>
           {/* Desktop toolbar */}
           <div className="hidden sm:flex items-center gap-2 shrink-0 ml-auto">
-            <div className="inline-flex items-center justify-center gap-1.5 rounded-md bg-[var(--accent)] px-3 py-2" title={t('song.fontSize')}>
+            <div className="song-accent-surface inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-2" title={t('song.fontSize')}>
               <button onClick={() => data.setFontSize(s => Math.max(14, s - 2))} className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"><Minus className="h-3.5 w-3.5" /></button>
               <span className="text-xs w-5 text-center text-[var(--muted-foreground)] tabular-nums">{data.fontSize}</span>
               <button onClick={() => data.setFontSize(s => Math.min(32, s + 2))} className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"><Plus className="h-3.5 w-3.5" /></button>
@@ -411,7 +451,7 @@ export default function SongViewPage() {
                 </a>
               </div>
             ) : isSynced ? (
-              <div className="flex items-center gap-1.5 sm:gap-2 rounded-full bg-[var(--success-muted)] border border-[var(--success)]/30 px-2 sm:px-3 py-1">
+              <div className="song-playing-surface song-playing-surface--synced flex items-center gap-1.5 sm:gap-2 rounded-full px-2 sm:px-3 py-1">
                 <span className="inline-block h-2 w-2 rounded-full bg-[var(--success)] animate-pulse" />
                 <Music className="h-3 w-3 text-[var(--success)]" />
                 <span className="text-xs text-[var(--success)] truncate max-w-[180px] sm:max-w-none">
@@ -420,7 +460,7 @@ export default function SongViewPage() {
                 </span>
               </div>
             ) : isSameSong ? (
-              <div className="flex items-center gap-1.5 sm:gap-2 rounded-full bg-[var(--success-muted)]/50 border border-[var(--success)]/20 px-2 sm:px-3 py-1">
+              <div className="song-playing-surface song-playing-surface--matching flex items-center gap-1.5 sm:gap-2 rounded-full px-2 sm:px-3 py-1">
                 <span className="inline-block h-2 w-2 rounded-full bg-[var(--success)]/50 animate-pulse" />
                 <Music className="h-3 w-3 text-[var(--success)]/50" />
                 <span className="text-xs text-[var(--success)]/60 truncate max-w-[180px] sm:max-w-none">
@@ -429,18 +469,18 @@ export default function SongViewPage() {
                 </span>
               </div>
             ) : spotify.is_playing && spotify.track ? (
-              <div className="flex items-center gap-1.5 sm:gap-2 rounded-full bg-[var(--accent)] px-2 sm:px-3 py-1">
+              <div className="song-playing-surface flex items-center gap-1.5 sm:gap-2 rounded-full px-2 sm:px-3 py-1">
                 <span className="inline-block h-2 w-2 rounded-full bg-[var(--muted-foreground)]" />
                 <span className="text-xs text-[var(--muted-foreground)] truncate max-w-[140px] sm:max-w-none">
                   {spotify.track.name}
                   {data.debug && <span className="ml-1 font-mono text-[10px]">[{fmtTime(spotify.progress_ms)}/{fmtTime(spotify.duration_ms)}]</span>}
                 </span>
                 {playingMatch ? (
-                  <button onClick={() => router.push(`/songs/${playingMatch.id}`)} className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium bg-[var(--accent)] text-[var(--foreground)] hover:bg-[var(--border)] transition-colors shrink-0">
+                  <button onClick={() => router.push(`/songs/${playingMatch.id}`)} className="song-playing-action inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium text-[var(--foreground)] transition-colors shrink-0">
                     <ExternalLink className="h-3 w-3" /><span>{t('song.show')}</span>
                   </button>
                 ) : spotifyConnected ? (
-                  <button onClick={() => data.handleImportPlaying(spotify)} disabled={data.importing} className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium bg-[var(--primary)] text-[var(--primary-foreground)] transition-opacity hover:opacity-90 disabled:opacity-50 shrink-0">
+                  <button onClick={() => data.handleImportPlaying(spotify)} disabled={data.importing} className="song-playing-action--primary inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium text-[var(--primary-foreground)] transition-opacity hover:opacity-90 disabled:opacity-50 shrink-0">
                     {data.importing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}<span>{data.importing ? t('home.importing') : t('song.importBtn')}</span>
                   </button>
                 ) : null}
@@ -448,7 +488,7 @@ export default function SongViewPage() {
             ) : null}
             <button
               onClick={() => setFollowPlaying((v) => !v)}
-              className={`shrink-0 inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-medium transition-colors ${followPlaying ? 'bg-[var(--primary)]/20 text-[var(--primary)]' : 'bg-[var(--accent)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]'}`}
+              className={`song-follow-button shrink-0 inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-medium transition-colors ${followPlaying ? 'song-follow-button--active' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]'}`}
               title={followPlaying ? t('song.followOn') : t('song.followOff')}
             >
               <Repeat className="h-3 w-3" />
@@ -495,11 +535,13 @@ export default function SongViewPage() {
       </div>
 
       {/* Lyrics */}
-      <div className="rounded-lg bg-[var(--card)] border border-[var(--border)] overflow-hidden flex-1 min-h-0">
-        {data.showRaw ? (
-          <pre className="p-4 sm:p-6 whitespace-pre-wrap font-sans leading-relaxed h-full sm:h-auto sm:max-h-[70vh] overflow-y-auto overflow-x-hidden" style={{ fontSize: `${data.fontSize}px` }}>{song.lyrics_raw || t('song.noLyricsParen')}</pre>
+      <div className="lyrics-panel-shell relative isolate flex-1 min-h-0" style={lyricPanelStyle}>
+        <div className="lyrics-ambient-orbit" aria-hidden="true" />
+        <div className="lyrics-panel relative isolate h-full rounded-lg overflow-hidden">
+          {data.showRaw ? (
+          <pre className="relative z-10 p-4 sm:p-6 whitespace-pre-wrap font-sans leading-relaxed h-full sm:h-auto sm:max-h-[70vh] overflow-y-auto overflow-x-hidden" style={{ fontSize: `${data.fontSize}px` }}>{song.lyrics_raw || t('song.noLyricsParen')}</pre>
         ) : (
-          <div ref={data.lyricsRef} className="p-4 sm:p-6 h-full sm:h-auto sm:max-h-[70vh] overflow-y-auto overflow-x-hidden scroll-smooth" style={{ fontSize: `${data.fontSize}px` }}>
+          <div ref={data.lyricsRef} className="relative z-10 p-4 sm:p-6 h-full sm:h-auto sm:max-h-[70vh] overflow-y-auto overflow-x-hidden scroll-smooth" style={{ fontSize: `${data.fontSize}px` }}>
             {furiganaLines.length > 0 ? (
               furiganaLines.map((line, i) => (
                 <div key={i} ref={(el) => { data.lineRefs.current[i] = el; }}>
@@ -528,7 +570,8 @@ export default function SongViewPage() {
               <p className="text-sm text-[var(--muted-foreground)]">{t('song.noLyricsSimple')}</p>
             )}
           </div>
-        )}
+          )}
+        </div>
       </div>
 
       {/* Meta */}
@@ -653,10 +696,12 @@ function MobileMenu({ data, sync, song, id, router, furiganaLines, hasSyncData, 
   }, [showMenu]);
 
   const menuItems = [
-    { icon: <Share2 className="h-4 w-4" />, label: t('song.share'), onClick: () => router.push(sync.activeLine >= 0 ? `/songs/${id}/share?line=${sync.activeLine}` : `/songs/${id}/share`) },
     { icon: <RefreshCw className={`h-4 w-4 ${data.syncing ? 'animate-spin' : ''}`} />, label: data.syncing ? t('song.syncing') : t('song.sync'), onClick: data.handleSync, disabled: data.syncing },
     ...(pipSupported && furiganaLines.length > 0 ? [{ icon: <PictureInPicture className="h-4 w-4" />, label: t('song.pipBtn'), onClick: () => data.openPiP(furiganaLines, song, highlightRef.current, pipWindowRef, lineTimestamps) }] : []),
     { icon: <Bug className="h-4 w-4" />, label: t('song.debug'), onClick: () => data.setDebug(!data.debug), active: data.debug },
+    { icon: <Download className="h-4 w-4" />, label: '.txt', onClick: () => { window.location.href = `/api/songs/${id}/export?format=text`; } },
+    { icon: <Download className="h-4 w-4" />, label: '.lrc', onClick: () => { window.location.href = `/api/songs/${id}/export?format=lrc`; } },
+    { icon: <Download className="h-4 w-4" />, label: `.html ${t('song.exportFurigana')}`, onClick: () => { window.location.href = `/api/songs/${id}/export?format=html`; } },
     ...(spotifyConnected ? [
       { icon: <Pencil className="h-4 w-4" />, label: t('common.edit'), onClick: () => router.push(`/songs/${id}/edit`) },
       { icon: <Languages className="h-4 w-4" />, label: t('furigana.title'), onClick: () => router.push(`/songs/${id}/furigana/edit`) },
@@ -668,32 +713,36 @@ function MobileMenu({ data, sync, song, id, router, furiganaLines, hasSyncData, 
     <div className="fixed bottom-0 left-0 right-0 sm:hidden z-50 bg-[var(--background)]/95 backdrop-blur-sm border-t border-[var(--border)]">
       <div className="mx-auto max-w-[860px] flex items-center justify-between px-2" style={{ paddingTop: 8, paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 12px)' }}>
         {/* A-/A+ */}
-        <div className="flex items-stretch rounded-lg bg-[var(--accent)] overflow-hidden">
+        <div className="song-mobile-surface flex items-stretch rounded-lg overflow-hidden">
           <button onClick={() => data.setFontSize(s => Math.max(14, s - 2))} className="flex items-center justify-center px-2 py-1 text-sm font-medium text-[var(--muted-foreground)] active:text-[var(--foreground)] active:bg-[var(--accent)]">A-</button>
           <div className="w-px bg-[var(--border)]" />
           <button onClick={() => data.setFontSize(s => Math.min(32, s + 2))} className="flex items-center justify-center px-2 py-1 text-base font-medium text-[var(--muted-foreground)] active:text-[var(--foreground)] active:bg-[var(--accent)]">A+</button>
         </div>
 
         {/* Copy */}
-        <button onClick={data.handleCopy} className={`flex items-center justify-center p-2 ${data.copied ? 'text-[var(--success)]' : 'text-[var(--muted-foreground)]'}`}>
+        <button onClick={data.handleCopy} className={`song-mobile-button flex items-center justify-center rounded-lg p-2 ${data.copied ? 'text-[var(--success)]' : ''}`}>
           {data.copied ? <Check className="h-5 w-5" /> : <Copy className="h-5 w-5" />}
         </button>
 
         {/* Paste */}
         {!hasSyncData && (
-          <button onClick={() => data.setShowPasteLrc(!data.showPasteLrc)} className={`flex items-center justify-center p-2 ${data.showPasteLrc ? 'text-[var(--primary)]' : 'text-[var(--muted-foreground)]'}`}>
+          <button onClick={() => data.setShowPasteLrc(!data.showPasteLrc)} className={`song-mobile-button flex items-center justify-center rounded-lg p-2 ${data.showPasteLrc ? 'song-mobile-button--active' : ''}`}>
             <ClipboardPaste className="h-5 w-5" />
           </button>
         )}
 
         {/* Raw / Furigana */}
-        <button onClick={() => data.setShowRaw(!data.showRaw)} className="flex items-center justify-center p-2 text-[var(--muted-foreground)]">
+        <button onClick={() => data.setShowRaw(!data.showRaw)} className={`song-mobile-button flex items-center justify-center rounded-lg p-2 ${data.showRaw ? 'song-mobile-button--active' : ''}`}>
           {data.showRaw ? <BookOpen className="h-5 w-5" /> : <FileText className="h-5 w-5" />}
         </button>
 
-        {/* Export */}
-        <button onClick={() => data.setShowExport(!data.showExport)} className={`flex items-center justify-center p-2 ${data.showExport ? 'text-[var(--primary)]' : 'text-[var(--muted-foreground)]'}`}>
-          <Download className="h-5 w-5" />
+        {/* Share */}
+        <button
+          onClick={() => router.push(sync.activeLine >= 0 ? `/songs/${id}/share?line=${sync.activeLine}` : `/songs/${id}/share`)}
+          className="song-mobile-button flex items-center justify-center rounded-lg p-2"
+          title={t('song.share')}
+        >
+          <Share2 className="h-5 w-5" />
         </button>
 
         {/* 3-dot menu */}
