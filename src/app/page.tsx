@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { useTransitionRouter } from 'next-view-transitions';
 import { Music, Pencil, Trash2, Plus, Unlink, Download, ExternalLink, Loader2, Search, X, User, Star, FolderPlus, Trash } from 'lucide-react';
 import ConfirmDialog from '@/components/ConfirmDialog';
+import CoverImage from '@/components/CoverImage';
 import { useI18n } from '@/lib/i18n';
 import { findBestMatch, isSongPlaying } from '@/lib/match';
 import { useNowPlaying } from '@/hooks/useNowPlaying';
@@ -12,6 +14,7 @@ interface SongItem {
   id: string;
   title: string;
   artist: string;
+  cover_url?: string | null;
   created_by: string;
   created_by_name: string;
   is_public: number;
@@ -45,10 +48,35 @@ function importErrorMsg(t: (k: string) => string, error?: string, fallbackKey?: 
   return key ? t(key) : error;
 }
 
+const SONGS_CACHE_KEY = 'jplrc:songs:list';
+const SONGS_CACHE_TTL = 5 * 60 * 1000;
+
+function getCachedSongs(): SongItem[] | null {
+  if (typeof sessionStorage === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(SONGS_CACHE_KEY);
+    if (!raw) return null;
+    const { data, timestamp } = JSON.parse(raw);
+    if (Date.now() - timestamp > SONGS_CACHE_TTL) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function setCachedSongs(data: SongItem[]) {
+  if (typeof sessionStorage === 'undefined') return;
+  try {
+    sessionStorage.setItem(SONGS_CACHE_KEY, JSON.stringify({ data, timestamp: Date.now() }));
+  } catch {}
+}
+
 export default function HomePage() {
   const { t, locale } = useI18n();
   const [songs, setSongs] = useState<SongItem[]>([]);
   const [loading, setLoading] = useState(true);
+  // `null` means the Spotify login state is still being resolved. Keep login UI hidden
+  // until that request completes so authenticated users never see a misleading login button.
   const [spotify, setSpotify] = useState<SpotifyStatus | null>(null);
   const nowPlaying = useNowPlaying(!!spotify?.connected);
   const [importing, setImporting] = useState(false);
@@ -70,6 +98,7 @@ export default function HomePage() {
   const [filterCollection, setFilterCollection] = useState<string | null>(null);
   const [collectionSongs, setCollectionSongs] = useState<Set<string>>(new Set());
   const router = useRouter();
+  const transitionRouter = useTransitionRouter();
   const searchParams = useSearchParams();
 
   const showToast = (type: 'success' | 'error', msg: string) => {
@@ -105,15 +134,21 @@ export default function HomePage() {
   }, [searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    const cached = getCachedSongs();
+    if (cached) {
+      setSongs(cached);
+      setLoading(false);
+    }
+
     fetch('/api/songs')
       .then((r) => r.json())
-      .then((data) => { setSongs(data); setLoading(false); })
+      .then((data) => { setSongs(data); setCachedSongs(data); setLoading(false); })
       .catch(() => setLoading(false));
 
     fetch('/api/spotify/status')
       .then((r) => r.json())
       .then((data) => setSpotify(data))
-      .catch(() => {});
+      .catch(() => setSpotify({ connected: false }));
 
     fetch('/api/me')
       .then((r) => r.json())
@@ -209,7 +244,11 @@ export default function HomePage() {
       setPlaylistResult(data);
       // Refresh song list
       const songsRes = await fetch('/api/songs');
-      if (songsRes.ok) setSongs(await songsRes.json());
+      if (songsRes.ok) {
+        const data = await songsRes.json();
+        setSongs(data);
+        setCachedSongs(data);
+      }
     } catch {
       showToast('error', t('home.playlistImportFailed'));
     } finally {
@@ -277,7 +316,7 @@ export default function HomePage() {
           <p className="text-xs text-[var(--muted-foreground)] mt-1">{t('home.songCount', { count: filteredSongs.length })}{(searchQuery || mySongsOnly || favoritesOnly) && filteredSongs.length !== songs.length ? ` / ${songs.length}` : ''}</p>
         </div>
         <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto">
-          {spotify?.connected ? (
+          {spotify === null ? null : spotify.connected ? (
             <div className="flex items-center gap-2 flex-1 sm:flex-none">
               <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--success)]" />
               <span className="text-xs text-[var(--muted-foreground)] truncate">{spotify.display_name}</span>
@@ -520,16 +559,21 @@ export default function HomePage() {
           {filteredSongs.map((song) => {
             const isPlaying = nowPlaying?.is_playing && isSongPlaying(song, nowPlaying.track, currentUser?.email);
             return (
-              <div key={song.id} className={`group flex items-center gap-3 sm:gap-4 rounded-lg bg-[var(--card)] border px-4 sm:px-5 py-3 sm:py-4 transition-colors hover:bg-[var(--muted)] cursor-pointer ${isPlaying ? 'border-[var(--success)]/50 bg-[var(--success-muted)]' : 'border-[var(--border)]'}`} onClick={() => router.push(`/songs/${song.id}`)}>
-                <div className={`flex h-9 w-9 sm:h-10 sm:w-10 shrink-0 items-center justify-center rounded-md ${isPlaying ? 'bg-[var(--success-muted)]' : 'bg-[var(--muted)]'}`}>
-                  <Music className={`h-4 w-4 ${isPlaying ? 'text-[var(--success)]' : 'text-[var(--muted-foreground)]'}`} />
-                </div>
+              <div
+                key={song.id}
+                className={`group flex items-center gap-3 sm:gap-4 rounded-lg bg-[var(--card)] border px-4 sm:px-5 py-3 sm:py-4 transition-colors hover:bg-[var(--muted)] cursor-pointer ${isPlaying ? 'border-[var(--success)]/50 bg-[var(--success-muted)]' : 'border-[var(--border)]'}`}
+                onClick={() => transitionRouter.push(`/songs/${song.id}`)}
+                onMouseEnter={() => { if ('connection' in navigator && (navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData !== true) { fetch(`/api/songs/${song.id}`).catch(() => {}); }}}
+              >
+                <CoverImage src={song.cover_url} alt={song.title} size="sm" viewTransitionName={`song-cover-${song.id}`} />
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium truncate flex items-center gap-2">
-                    {song.title}
+                    <span className="cover-transition truncate" style={{ ['--vt-name' as string]: `song-title-${song.id}` }}>{song.title}</span>
                     {isPlaying && <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--success)] animate-pulse shrink-0" />}
                   </div>
-                  <div className="text-xs text-[var(--muted-foreground)] mt-0.5 truncate">{song.artist || t('common.unknownArtist')}</div>
+                  <div className="text-xs text-[var(--muted-foreground)] mt-0.5 truncate">
+                    <span className="cover-transition truncate" style={{ ['--vt-name' as string]: `song-artist-${song.id}` }}>{song.artist || t('common.unknownArtist')}</span>
+                  </div>
                   {song.created_by_name && (
                     <div className="text-[10px] text-[var(--muted-foreground)]/60 mt-0.5 truncate">{t('home.createdBy')}: {song.created_by_name}</div>
                   )}
