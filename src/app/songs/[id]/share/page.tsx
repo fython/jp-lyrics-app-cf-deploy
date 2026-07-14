@@ -209,24 +209,28 @@ async function drawLandscape(
   ctx.textBaseline = 'alphabetic';
   ctx.fillStyle = '#ffffff';
   ctx.font = 'bold 52px sans-serif';
-  for (const line of wrapText(ctx, song.title, 560, 2)) {
+  const titleLines = wrapText(ctx, song.title, 560, 2);
+  for (const line of titleLines) {
     ctx.fillText(line, textX, textY);
     textY += 66;
   }
   textY += 2;
   ctx.fillStyle = '#94a3b8';
   ctx.font = '30px sans-serif';
-  for (const line of wrapText(ctx, song.artist || '', 560, 1)) {
+  const artistLines = wrapText(ctx, song.artist || '', 560, 1);
+  for (const line of artistLines) {
     ctx.fillText(line, textX, textY);
     textY += 42;
   }
 
+  // These rows share the header's measured flow: a two-line title now pushes both down.
+  const dividerY = artistLines.length > 0 ? textY + 5 : 230;
   ctx.fillStyle = 'rgba(255,255,255,0.08)';
-  ctx.fillRect(textX, 230, 560, 1);
+  ctx.fillRect(textX, dividerY, 560, 1);
 
   // Lyrics
   const lyricsX = textX;
-  const lyricsY = 270;
+  const lyricsY = dividerY + 40;
   const lyricsW = 560;
   const lyricsLineH = 44;
   const lyricsMaxLines = 6;
@@ -379,6 +383,7 @@ export default function SharePage() {
   const [copied, setCopied] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [orientation, setOrientation] = useState<Orientation>('landscape');
+  const [coverColor, setCoverColor] = useState<CoverPalette | null>(null);
 
   const pageUrl = typeof window !== 'undefined' ? `${window.location.origin}/songs/${id}` : '';
 
@@ -399,6 +404,36 @@ export default function SharePage() {
       .catch(() => setError(t('share.error')))
       .finally(() => setLoading(false));
   }, [id, t]);
+
+  // Reuse the exact detail-page palette pipeline for the surrounding share-page background.
+  useEffect(() => {
+    if (!song?.cover_url) {
+      setCoverColor(null);
+      return;
+    }
+    let cancelled = false;
+    const image = new Image();
+    image.crossOrigin = 'anonymous';
+    image.onload = () => {
+      const color = extractMaterialCoverPalette(image);
+      if (!cancelled) setCoverColor(color);
+    };
+    image.onerror = () => { if (!cancelled) setCoverColor(null); };
+    image.src = song.cover_url;
+    return () => { cancelled = true; };
+  }, [song?.cover_url]);
+
+  // Match the detail page's restrained viewport tint (96% theme background + 4% cover accent).
+  useEffect(() => {
+    if (!coverColor) return;
+    const accent = `rgb(${coverColor.primary.r} ${coverColor.primary.g} ${coverColor.primary.b})`;
+    document.body.style.setProperty('--song-page-accent', accent);
+    document.body.classList.add('song-page-themed');
+    return () => {
+      document.body.classList.remove('song-page-themed');
+      document.body.style.removeProperty('--song-page-accent');
+    };
+  }, [coverColor]);
 
   useEffect(() => {
     if (defaultLine !== null && lyricsLines.length > 0) {
@@ -508,7 +543,7 @@ export default function SharePage() {
     : 'max-w-3xl';
 
   return (
-    <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)]">
+    <div className="min-h-screen text-[var(--foreground)]">
       <div className={`mx-auto px-3 py-3 sm:px-4 sm:py-6 ${cardAspectClass}`}>
         {/* Align navigation and heading scale with the song-detail page. */}
         <div className="mb-3 flex items-center gap-1.5 text-xs text-[var(--muted-foreground)] sm:mb-8">

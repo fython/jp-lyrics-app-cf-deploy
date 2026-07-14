@@ -255,6 +255,12 @@ textarea {
   background: color-mix(in srgb, var(--primary) 88%, var(--song-accent));
   border-color: color-mix(in srgb, var(--primary) 80%, var(--song-accent));
 }
+/* Only when palette extraction succeeds, an expanded menu trigger uses the cover tone rather than the generic primary. */
+.song-view.song-view--accented .song-accent-button--active {
+  color: color-mix(in srgb, var(--foreground) 50%, var(--song-accent));
+  background: color-mix(in srgb, var(--primary) 35%, var(--song-accent));
+  border-color: color-mix(in srgb, var(--border) 42%, var(--song-accent));
+}
 .song-accent-surface {
   background: color-mix(in srgb, var(--accent) 88%, var(--song-accent));
   border: 1px solid color-mix(in srgb, var(--border) 86%, var(--song-accent));
