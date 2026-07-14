@@ -239,7 +239,7 @@ export default function SongViewPage() {
     : undefined;
 
   return (
-    <div className="song-view fade-in flex flex-col h-[calc(100dvh-2.75rem)] pb-24 overflow-visible sm:block sm:h-auto sm:pb-0" style={songThemeStyle}>
+    <div className={`song-view fade-in flex flex-col h-[calc(100dvh-2.75rem)] pb-24 overflow-visible sm:block sm:h-auto sm:pb-0${coverColor ? ' song-view--accented' : ''}`} style={songThemeStyle}>
       {/* Breadcrumb */}
       <div className="shrink-0 mb-3 sm:mb-8 flex items-center gap-1.5 text-xs text-[var(--muted-foreground)]">
         <button onClick={() => transitionRouter.push('/')} className="hover:text-[var(--foreground)] transition-colors inline-flex items-center gap-1">
@@ -439,10 +439,16 @@ export default function SongViewPage() {
         </div>
       </div>
 
-        {/* Spotify sync indicator */}
-        {spotify?.connected && (
-          <div className="mt-2 sm:mt-4 flex items-center gap-2">
-            {spotify.error ? (
+        {/* Spotify playback status stays mounted so loading/resolved state cannot move the lyrics layout. */}
+        <div className="mt-2 sm:mt-4 flex min-h-7 items-center gap-2">
+            {spotifyConnected === null || !spotify ? (
+              <div className="song-playing-surface flex items-center gap-1.5 sm:gap-2 rounded-full px-2 sm:px-3 py-1">
+                {spotifyConnected === null ? <Loader2 className="h-3 w-3 animate-spin text-[var(--muted-foreground)]" /> : <span className="inline-block h-2 w-2 rounded-full bg-[var(--muted-foreground)]" />}
+                <span className="text-xs text-[var(--muted-foreground)] truncate max-w-[180px] sm:max-w-none">
+                  {spotifyConnected === null ? t('song.spotifyLoading') : t('song.spotifyDisconnected')}
+                </span>
+              </div>
+            ) : spotify.error ? (
               <div className="flex items-center gap-1.5 sm:gap-2 rounded-full bg-[var(--warning-muted)] border border-[var(--warning)]/30 px-2 sm:px-3 py-1">
                 <span className="inline-block h-2 w-2 rounded-full bg-[var(--warning)]" />
                 <span className="text-xs text-[var(--warning)]">{t('song.tokenExpired')}</span>
@@ -486,16 +492,17 @@ export default function SongViewPage() {
                 ) : null}
               </div>
             ) : null}
-            <button
-              onClick={() => setFollowPlaying((v) => !v)}
-              className={`song-follow-button shrink-0 inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-medium transition-colors ${followPlaying ? 'song-follow-button--active' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]'}`}
-              title={followPlaying ? t('song.followOn') : t('song.followOff')}
-            >
-              <Repeat className="h-3 w-3" />
-              <span className="hidden sm:inline">{followPlaying ? t('song.followOn') : t('song.followOff')}</span>
-            </button>
+            {spotify?.connected && (
+              <button
+                onClick={() => setFollowPlaying((v) => !v)}
+                className={`song-follow-button shrink-0 inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-medium transition-colors ${followPlaying ? 'song-follow-button--active' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]'}`}
+                title={followPlaying ? t('song.followOn') : t('song.followOff')}
+              >
+                <Repeat className="h-3 w-3" />
+                <span className="hidden sm:inline">{followPlaying ? t('song.followOn') : t('song.followOff')}</span>
+              </button>
+            )}
           </div>
-        )}
 
         {/* Debug panel */}
         {data.debug && (
@@ -612,6 +619,63 @@ type ToolbarMenuItem = {
   href?: string;
 };
 
+/** Icon-only mobile controls reveal their localized action on a touch long-press. */
+function MobileIconButton({ label, className = '', children, onClick, ...props }: React.ComponentProps<'button'> & { label: string }) {
+  const [showLabel, setShowLabel] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressedRef = useRef(false);
+
+  const clearLongPress = () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = null;
+  };
+
+  useEffect(() => clearLongPress, []);
+
+  return (
+    <button
+      {...props}
+      aria-label={label}
+      title={label}
+      className={`song-mobile-button relative flex items-center justify-center rounded-lg p-2 ${className}`}
+      onPointerDown={(event) => {
+        props.onPointerDown?.(event);
+        if (event.pointerType === 'mouse') return;
+        longPressedRef.current = false;
+        timerRef.current = setTimeout(() => {
+          longPressedRef.current = true;
+          setShowLabel(true);
+        }, 450);
+      }}
+      onPointerUp={(event) => {
+        props.onPointerUp?.(event);
+        clearLongPress();
+      }}
+      onPointerCancel={(event) => {
+        props.onPointerCancel?.(event);
+        clearLongPress();
+        setShowLabel(false);
+      }}
+      onContextMenu={(event) => {
+        props.onContextMenu?.(event);
+        event.preventDefault();
+      }}
+      onClick={(event) => {
+        if (longPressedRef.current) {
+          event.preventDefault();
+          longPressedRef.current = false;
+          setShowLabel(false);
+          return;
+        }
+        onClick?.(event);
+      }}
+    >
+      {children}
+      {showLabel && <span role="status" className="song-mobile-tooltip">{label}</span>}
+    </button>
+  );
+}
+
 function ToolbarMenu({ label, items }: { label: ReactNode; items: ToolbarMenuItem[] }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -714,42 +778,41 @@ function MobileMenu({ data, sync, song, id, router, furiganaLines, hasSyncData, 
       <div className="mx-auto max-w-[860px] flex items-center justify-between px-2" style={{ paddingTop: 8, paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 12px)' }}>
         {/* A-/A+ */}
         <div className="song-mobile-surface flex items-stretch rounded-lg overflow-hidden">
-          <button onClick={() => data.setFontSize(s => Math.max(14, s - 2))} className="flex items-center justify-center px-2 py-1 text-sm font-medium text-[var(--muted-foreground)] active:text-[var(--foreground)] active:bg-[var(--accent)]">A-</button>
+          <button onClick={() => data.setFontSize(s => Math.max(14, s - 2))} className="song-mobile-text-button flex items-center justify-center px-2 py-1 text-sm font-medium">A-</button>
           <div className="w-px bg-[var(--border)]" />
-          <button onClick={() => data.setFontSize(s => Math.min(32, s + 2))} className="flex items-center justify-center px-2 py-1 text-base font-medium text-[var(--muted-foreground)] active:text-[var(--foreground)] active:bg-[var(--accent)]">A+</button>
+          <button onClick={() => data.setFontSize(s => Math.min(32, s + 2))} className="song-mobile-text-button flex items-center justify-center px-2 py-1 text-base font-medium">A+</button>
         </div>
 
         {/* Copy */}
-        <button onClick={data.handleCopy} className={`song-mobile-button flex items-center justify-center rounded-lg p-2 ${data.copied ? 'text-[var(--success)]' : ''}`}>
+        <MobileIconButton label={data.copied ? t('share.copied') : t('song.copy')} onClick={data.handleCopy} className={data.copied ? 'text-[var(--success)]' : ''}>
           {data.copied ? <Check className="h-5 w-5" /> : <Copy className="h-5 w-5" />}
-        </button>
+        </MobileIconButton>
 
         {/* Paste */}
         {!hasSyncData && (
-          <button onClick={() => data.setShowPasteLrc(!data.showPasteLrc)} className={`song-mobile-button flex items-center justify-center rounded-lg p-2 ${data.showPasteLrc ? 'song-mobile-button--active' : ''}`}>
+          <MobileIconButton label={t('song.paste')} onClick={() => data.setShowPasteLrc(!data.showPasteLrc)} className={data.showPasteLrc ? 'song-mobile-button--active' : ''}>
             <ClipboardPaste className="h-5 w-5" />
-          </button>
+          </MobileIconButton>
         )}
 
         {/* Raw / Furigana */}
-        <button onClick={() => data.setShowRaw(!data.showRaw)} className={`song-mobile-button flex items-center justify-center rounded-lg p-2 ${data.showRaw ? 'song-mobile-button--active' : ''}`}>
+        <MobileIconButton label={data.showRaw ? t('song.furigana') : t('song.raw')} onClick={() => data.setShowRaw(!data.showRaw)} className={data.showRaw ? 'song-mobile-button--active' : ''}>
           {data.showRaw ? <BookOpen className="h-5 w-5" /> : <FileText className="h-5 w-5" />}
-        </button>
+        </MobileIconButton>
 
         {/* Share */}
-        <button
+        <MobileIconButton
+          label={t('song.share')}
           onClick={() => router.push(sync.activeLine >= 0 ? `/songs/${id}/share?line=${sync.activeLine}` : `/songs/${id}/share`)}
-          className="song-mobile-button flex items-center justify-center rounded-lg p-2"
-          title={t('song.share')}
         >
           <Share2 className="h-5 w-5" />
-        </button>
+        </MobileIconButton>
 
         {/* 3-dot menu */}
         <div className="relative" ref={menuRef}>
-          <button onClick={() => setShowMenu(!showMenu)} className={`flex items-center justify-center p-2 rounded-lg transition-colors ${showMenu ? 'text-[var(--foreground)] bg-[var(--accent)]' : 'text-[var(--muted-foreground)]'}`}>
+          <MobileIconButton label={t('song.more')} onClick={() => setShowMenu(!showMenu)} className={showMenu ? 'song-mobile-button--active' : ''}>
             <MoreVertical className="h-5 w-5" />
-          </button>
+          </MobileIconButton>
           {showMenu && (
             <div className="absolute right-0 bottom-full mb-2 z-50 rounded-xl bg-[var(--card)] border border-[var(--border)] shadow-xl py-1.5 min-w-[180px] fade-in">
               {menuItems.map((item, i) => (
