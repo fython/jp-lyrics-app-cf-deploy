@@ -47,8 +47,10 @@
   --warning-muted: rgba(217,119,6,0.12);
 }
 
-/* Tailwind preflight handles reset — no manual * reset needed */
-
+/* Ambient decoration may extend outside a card, but must never create a horizontal document scrollbar. */
+html {
+  overflow-x: clip;
+}
 body {
   background: var(--background);
   color: var(--foreground);
@@ -203,21 +205,50 @@ textarea {
 .lyrics-panel-shell {
   --lyric-accent: var(--border);
   --lyric-orbit-accent: var(--lyric-accent);
+  --lyric-orbit-accent-2: var(--lyric-orbit-accent);
   --lyric-ambient-opacity: 0.68;
+  --lyric-ambient-main-brightness: 1;
+  --lyric-ambient-side-brightness: 1;
+  --lyric-ambient-edge-brightness: 1;
   --lyric-ambient-core: 64%;
   --lyric-ambient-mid: 43%;
   --lyric-ambient-edge: 15%;
   --lyric-ambient-blur: 30px;
   --lyric-shadow-strength: 34%;
+  --lyric-static-shadow-strength: 52%;
+  --lyric-ambient-secondary-opacity: 0;
+  --lyric-ambient-breath-opacity: 0;
+  --lyric-ambient-breath-min-opacity: 0;
 }
 .lyrics-panel {
   z-index: 1;
   background: color-mix(in srgb, var(--card) 90%, var(--lyric-accent));
   border: 1px solid color-mix(in srgb, var(--border) 76%, var(--lyric-accent));
   /* Keep the original, always-visible external glow as the base layer. */
-  box-shadow: 0 0 52px -18px color-mix(in srgb, var(--lyric-accent) 62%, transparent);
+  box-shadow: 0 0 52px -18px color-mix(in srgb, var(--lyric-accent) var(--lyric-static-shadow-strength), transparent);
 }
-/* One uneven light source lives behind (not inside) the clipped lyrics panel. */
+/* Fixed rounded-rectangle outline breathes outward from the card perimeter, not from its centre. */
+.lyrics-ambient-breath {
+  position: absolute;
+  z-index: 0;
+  top: 50%;
+  left: 50%;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  opacity: var(--lyric-ambient-breath-opacity);
+  border: 1px solid color-mix(in srgb, color-mix(in srgb, var(--border) 76%, var(--lyric-accent)) 74%, transparent);
+  border-radius: var(--radius);
+  box-shadow: 0 0 16px 3px color-mix(in srgb, color-mix(in srgb, var(--border) 76%, var(--lyric-accent)) 70%, transparent), 0 0 36px 10px color-mix(in srgb, color-mix(in srgb, var(--border) 76%, var(--lyric-accent)) 36%, transparent);
+  transform: translate(-50%, -50%) scale(1);
+  filter: brightness(var(--lyric-ambient-edge-brightness));
+  animation: lyricsAmbientEdgeBreath 12s ease-in-out infinite;
+}
+/* Bright canvases make cover colors appear stronger; halve only this decorative layer's chroma. */
+[data-theme="light"] .lyrics-ambient-breath {
+  filter: brightness(var(--lyric-ambient-edge-brightness)) saturate(0.5);
+}
+/* The broad key light lives behind (not inside) the clipped lyrics panel. */
 .lyrics-ambient-orbit {
   position: absolute;
   z-index: 0;
@@ -226,12 +257,21 @@ textarea {
   width: 66%;
   height: 86%;
   pointer-events: none;
-  opacity: 0.9;
+  opacity: var(--lyric-ambient-opacity);
   border-radius: 50%;
   background: radial-gradient(ellipse at 38% 42%, color-mix(in srgb, var(--lyric-orbit-accent) 76%, transparent) 0%, color-mix(in srgb, var(--lyric-orbit-accent) 48%, transparent) 38%, color-mix(in srgb, var(--lyric-orbit-accent) 16%, transparent) 62%, transparent 78%);
-  filter: blur(30px);
+  filter: blur(var(--lyric-ambient-blur)) brightness(var(--lyric-ambient-main-brightness));
   transform: translate(-50%, -50%);
   animation: lyricsAmbientOrbit 20s linear infinite;
+}
+/* A smaller counter-moving rim light appears only for distinct cover-palette colours. */
+.lyrics-ambient-orbit--secondary {
+  width: 52%;
+  height: 70%;
+  opacity: var(--lyric-ambient-secondary-opacity);
+  background: radial-gradient(ellipse at 58% 46%, color-mix(in srgb, var(--lyric-orbit-accent-2) 66%, transparent) 0%, color-mix(in srgb, var(--lyric-orbit-accent-2) 36%, transparent) 38%, color-mix(in srgb, var(--lyric-orbit-accent-2) 12%, transparent) 64%, transparent 80%);
+  filter: blur(28px) brightness(var(--lyric-ambient-side-brightness));
+  animation: lyricsAmbientCounterOrbit 29s linear -8s infinite;
 }
 @media (min-width: 640px) {
   /* A larger, lower-opacity source keeps desktop ambient light airy; saturated art is softened further by its runtime profile. */
@@ -241,9 +281,12 @@ textarea {
   .lyrics-ambient-orbit {
     width: 72%;
     height: 92%;
-    opacity: var(--lyric-ambient-opacity);
     background: radial-gradient(ellipse at 38% 42%, color-mix(in srgb, var(--lyric-orbit-accent) var(--lyric-ambient-core), transparent) 0%, color-mix(in srgb, var(--lyric-orbit-accent) var(--lyric-ambient-mid), transparent) 40%, color-mix(in srgb, var(--lyric-orbit-accent) var(--lyric-ambient-edge), transparent) 66%, transparent 82%);
-    filter: blur(var(--lyric-ambient-blur));
+  }
+  .lyrics-ambient-orbit--secondary {
+    width: 56%;
+    height: 72%;
+    filter: blur(30px) brightness(var(--lyric-ambient-side-brightness));
   }
 }
 @keyframes lyricsAmbientOrbit {
@@ -253,8 +296,29 @@ textarea {
   75% { transform: translate(-76%, -50%) scale(0.96); }
   100% { transform: translate(-50%, -60%) scale(1.04); }
 }
+@keyframes lyricsAmbientCounterOrbit {
+  0% { transform: translate(-82%, -64%) scale(0.98); }
+  25% { transform: translate(-6%, -40%) scale(1.05); }
+  50% { transform: translate(-94%, -30%) scale(0.96); }
+  75% { transform: translate(-18%, -74%) scale(1.03); }
+  100% { transform: translate(-82%, -64%) scale(0.98); }
+}
+@keyframes lyricsAmbientEdgeBreath {
+  /* The glow starts broad, then contracts toward the fixed card edge without moving the outline itself. */
+  0%, 100% {
+    opacity: var(--lyric-ambient-breath-opacity);
+    box-shadow: 0 0 22px 5px color-mix(in srgb, color-mix(in srgb, var(--border) 76%, var(--lyric-accent)) 82%, transparent), 0 0 48px 16px color-mix(in srgb, color-mix(in srgb, var(--border) 76%, var(--lyric-accent)) 48%, transparent);
+    transform: translate(-50%, -50%) scale(1);
+  }
+  50% {
+    opacity: var(--lyric-ambient-breath-min-opacity);
+    box-shadow: 0 0 16px 3px color-mix(in srgb, color-mix(in srgb, var(--border) 76%, var(--lyric-accent)) 70%, transparent), 0 0 36px 10px color-mix(in srgb, color-mix(in srgb, var(--border) 76%, var(--lyric-accent)) 36%, transparent);
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
 @media (prefers-reduced-motion: reduce) {
-  .lyrics-ambient-orbit { animation: none; }
+  .lyrics-ambient-orbit,
+  .lyrics-ambient-breath { animation: none; }
 }
 .song-view {
   --song-accent: var(--border);
