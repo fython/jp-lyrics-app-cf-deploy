@@ -341,8 +341,159 @@ textarea {
   -webkit-touch-callout: none;
   touch-action: manipulation;
 }
+@property --song-card-glow-radius {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 150px;
+}
+@property --song-card-border-radius {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 110px;
+}
+@keyframes songCardGlowReveal {
+  from {
+    --song-card-glow-radius: 120px;
+    opacity: 0;
+  }
+  to {
+    --song-card-glow-radius: 180px;
+    opacity: 0.36;
+  }
+}
+@keyframes songCardBorderReveal {
+  from {
+    --song-card-border-radius: 90px;
+    opacity: 0;
+  }
+  to {
+    --song-card-border-radius: 140px;
+    opacity: 0.29;
+  }
+}
+.song-item-card {
+  --song-card-pointer-x: 50%;
+  --song-card-pointer-y: 50%;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background: var(--card);
+  border-color: var(--border);
+  transition: background-color 180ms ease, border-color 180ms ease, transform 180ms ease;
+}
+.song-item-card:hover,
+.song-item-card[data-touching="true"] {
+  background: color-mix(in srgb, var(--card) 94%, var(--song-card-accent));
+  border-color: color-mix(in srgb, var(--border) 70%, var(--song-card-accent));
+}
+.song-item-card__pointer-glow {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(
+    circle var(--song-card-glow-radius) at var(--song-card-pointer-x) var(--song-card-pointer-y),
+    color-mix(in srgb, var(--song-card-accent) 9%, transparent) 0%,
+    color-mix(in srgb, var(--song-card-accent) 4%, transparent) 42%,
+    transparent 76%
+  );
+}
+.song-item-card::after {
+  content: '';
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  pointer-events: none;
+  border: 1px solid transparent;
+  border-radius: inherit;
+  background: radial-gradient(
+      circle var(--song-card-border-radius) at var(--song-card-pointer-x) var(--song-card-pointer-y),
+      color-mix(in srgb, var(--song-card-accent) 21%, transparent),
+      transparent 74%
+    ) border-box;
+  mask: linear-gradient(#000 0 0) padding-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  -webkit-mask: linear-gradient(#000 0 0) padding-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  opacity: 0;
+}
+.song-item-card:hover .song-item-card__pointer-glow,
+.song-item-card[data-touching="true"] .song-item-card__pointer-glow {
+  animation: songCardGlowReveal 420ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+.song-item-card:hover::after,
+.song-item-card[data-touching="true"]::after {
+  animation: songCardBorderReveal 420ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+.song-item-card--playing {
+  border-color: color-mix(in srgb, var(--success) 50%, var(--border));
+  background: var(--success-muted);
+}
+.song-item-card--playing:hover,
+.song-item-card--playing[data-touching="true"] {
+  border-color: color-mix(in srgb, var(--success) 50%, var(--song-card-accent));
+  background: color-mix(in srgb, var(--success-muted) 90%, var(--song-card-accent));
+}
+@media (prefers-reduced-motion: reduce) {
+  .song-item-card,
+  .song-item-card__pointer-glow,
+  .song-item-card::after {
+    transition: none;
+    animation: none !important;
+  }
+  .song-item-card:hover .song-item-card__pointer-glow,
+.song-item-card[data-touching="true"] .song-item-card__pointer-glow { opacity: 0.5; }
+  .song-item-card:hover::after,
+.song-item-card[data-touching="true"]::after { opacity: 0.42; }
+}
 .song-view {
   --song-accent: var(--border);
+}
+.song-editor-page.song-view--accented {
+  background: color-mix(in srgb, var(--background) 94%, var(--song-accent));
+  border-radius: 1rem;
+}
+.song-editor-page.song-view--accented input,
+.song-editor-page.song-view--accented textarea {
+  border-color: color-mix(in srgb, var(--border) 72%, var(--song-accent));
+}
+.song-editor-page.song-view--accented input:focus,
+.song-editor-page.song-view--accented textarea:focus {
+  border-color: color-mix(in srgb, var(--song-accent) 72%, var(--border));
+}
+.song-editor-primary-button {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+.song-editor-primary-button:hover { opacity: 0.9; }
+.song-editor-choice--active,
+.song-editor-token--active {
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 15%, transparent);
+  border-color: color-mix(in srgb, var(--primary) 30%, transparent);
+}
+.song-editor-token--reading {
+  border-color: color-mix(in srgb, var(--primary) 30%, transparent);
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+}
+.song-editor-reading { color: color-mix(in srgb, var(--primary) 80%, var(--foreground)); }
+.song-view.song-view--accented .song-editor-primary-button {
+  background: color-mix(in srgb, var(--song-accent) 82%, var(--background));
+  color: color-mix(in srgb, var(--foreground) 88%, var(--song-accent));
+}
+.song-editor-page.song-view--accented .song-editor-choice--active,
+.song-editor-page.song-view--accented .song-editor-token--active {
+  color: color-mix(in srgb, var(--foreground) 82%, var(--song-accent));
+  background: color-mix(in srgb, var(--song-accent) 18%, transparent);
+  border-color: color-mix(in srgb, var(--song-accent) 52%, var(--border));
+}
+.song-editor-page.song-view--accented .song-editor-token--reading {
+  border-color: color-mix(in srgb, var(--song-accent) 42%, var(--border));
+  background: color-mix(in srgb, var(--song-accent) 14%, transparent);
+}
+.song-editor-page.song-view--accented .song-editor-reading {
+  color: color-mix(in srgb, var(--foreground) 70%, var(--song-accent));
 }
 .song-accent-button {
   color: color-mix(in srgb, var(--foreground) 90%, var(--song-accent));
@@ -388,6 +539,7 @@ textarea {
   background: color-mix(in srgb, var(--border) 80%, var(--song-accent));
 }
 .song-playing-action--primary {
+  color: var(--primary-foreground);
   background: color-mix(in srgb, var(--primary) 88%, var(--song-accent));
 }
 .song-follow-button {
@@ -398,6 +550,15 @@ textarea {
   color: var(--primary-foreground);
   background: color-mix(in srgb, var(--primary) 88%, var(--song-accent));
   border-color: color-mix(in srgb, var(--primary) 80%, var(--song-accent));
+}
+.song-view.song-view--accented .song-playing-action--primary {
+  color: color-mix(in srgb, var(--foreground) 88%, var(--song-accent));
+  background: color-mix(in srgb, var(--song-accent) 82%, var(--background));
+}
+.song-view.song-view--accented .song-follow-button--active {
+  color: color-mix(in srgb, var(--foreground) 88%, var(--song-accent));
+  background: color-mix(in srgb, var(--song-accent) 82%, var(--background));
+  border-color: color-mix(in srgb, var(--song-accent) 68%, var(--border));
 }
 /* Light mode keeps desktop controls close to white even with a very dark cover. */
 [data-theme="light"] .song-accent-button {

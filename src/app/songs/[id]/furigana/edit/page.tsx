@@ -13,6 +13,7 @@ import SpotifyLoginButton from '@/components/SpotifyLoginButton';
 import { convertToFuriganaClient } from '@/lib/kuroshiro-client';
 import type { FuriganaLine } from '@/lib/types';
 import { useAuthSession } from '@/lib/auth-session';
+import { useCoverTheme } from '@/hooks/useCoverPalette';
 
 interface SongData {
   id: string;
@@ -20,6 +21,7 @@ interface SongData {
   artist: string;
   lyrics_raw: string;
   lyrics_furigana: string;
+  cover_url?: string | null;
 }
 
 interface AuthState {
@@ -38,6 +40,8 @@ export default function FuriganaEditPage() {
   const [original, setOriginal] = useState<FuriganaLine[]>([]);
   const [loading, setLoading] = useState(true);
   const { session } = useAuthSession();
+  const coverTheme = useCoverTheme(song?.cover_url);
+  const coverColor = coverTheme.palette;
   const auth: AuthState | null = session === null ? null : {
     authenticated: session.user !== null,
     isAdmin: session.user?.isAdmin === true,
@@ -70,6 +74,18 @@ export default function FuriganaEditPage() {
       if (!res.ok) throw new Error();
       const data = (await res.json()) as SongData;
       setSong(data);
+      if (!data.cover_url) {
+        fetch(`/api/songs/${id}/cover`)
+          .then(async (coverResponse) => {
+            if (!coverResponse.ok) return null;
+            const coverData = await coverResponse.json() as { cover_url?: string | null };
+            return coverData.cover_url ?? null;
+          })
+          .then((url) => {
+            if (url) setSong((current) => current ? { ...current, cover_url: url } : current);
+          })
+          .catch(() => {});
+      }
       const parsed = parseFurigana(data.lyrics_furigana);
       setOriginal(parsed);
       setDraft(parsed);
@@ -174,7 +190,7 @@ export default function FuriganaEditPage() {
         <p className="text-sm text-[var(--muted-foreground)]">{t('song.notFound')}</p>
         <button
           onClick={() => router.push('/')}
-          className="mt-4 inline-flex items-center gap-1 text-xs text-[var(--primary)] hover:underline"
+          className="mt-4 inline-flex items-center gap-1 text-xs text-[var(--song-accent)] hover:underline"
         >
           <ArrowLeft className="h-3 w-3" /> {t('song.backToList')}
         </button>
@@ -195,7 +211,7 @@ export default function FuriganaEditPage() {
         <div className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-6 text-center">
           <p className="text-sm text-[var(--muted-foreground)]">{t('furigana.loginRequired')}</p>
           <SpotifyLoginButton
-            className="mt-4 inline-flex items-center gap-1.5 rounded-md bg-[var(--primary)] px-4 py-2 text-sm font-medium text-[var(--primary-foreground)] transition-opacity hover:opacity-90"
+            className="song-editor-primary-button mt-4 inline-flex items-center gap-1.5 rounded-md px-4 py-2 text-sm font-medium transition-opacity hover:opacity-90"
           >
             {t('song.spotify')}
           </SpotifyLoginButton>
@@ -204,8 +220,10 @@ export default function FuriganaEditPage() {
     );
   }
 
+  const songThemeStyle = coverTheme.style;
+
   return (
-    <div className="fade-in max-w-3xl">
+    <div className={`song-view song-editor-page fade-in max-w-3xl${coverColor ? ' song-view--accented' : ''}`} style={songThemeStyle}>
       {/* Breadcrumb */}
       <div className="mb-6 flex items-center gap-1.5 text-xs text-[var(--muted-foreground)]">
         <Link href="/" className="hover:text-[var(--foreground)] transition-colors">{t('common.list')}</Link>
@@ -217,7 +235,7 @@ export default function FuriganaEditPage() {
         <span className="text-[var(--foreground)]">{t('furigana.editBreadcrumb')}</span>
       </div>
 
-      <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      <div className="sticky top-11 z-40 -mx-4 mb-6 flex flex-col gap-3 border-b border-[var(--border)] bg-[var(--background)]/95 px-4 py-3 backdrop-blur-sm sm:-mx-6 sm:flex-row sm:items-center sm:justify-between sm:px-6">
         <div>
           <h1 className="text-lg font-semibold tracking-tight">{t('furigana.title')}</h1>
           {song.artist && <p className="text-xs text-[var(--muted-foreground)]">{song.artist}</p>}
@@ -226,7 +244,7 @@ export default function FuriganaEditPage() {
           <button
             onClick={handleSave}
             disabled={saving || !isDirty}
-            className="inline-flex items-center gap-1.5 rounded-md bg-[var(--primary)] px-4 py-2 text-sm font-medium text-[var(--primary-foreground)] transition-opacity hover:opacity-90 disabled:opacity-50"
+            className="song-editor-primary-button inline-flex items-center gap-1.5 rounded-md px-4 py-2 text-sm font-medium transition-opacity hover:opacity-90 disabled:opacity-50"
           >
             {saving ? <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" /> : null}
             {saving ? t('common.loading') : t('common.save')}

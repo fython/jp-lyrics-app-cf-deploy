@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTransitionRouter } from 'next-view-transitions';
-import { Music, Share2, Trash2, Plus, Unlink, Download, ExternalLink, Loader2, Search, X, User, Star, FolderPlus, Trash } from 'lucide-react';
+import { Music, Plus, Unlink, Download, ExternalLink, Loader2, Search, X, User, Star, FolderPlus, Trash } from 'lucide-react';
 import ConfirmDialog from '@/components/ConfirmDialog';
-import CoverImage from '@/components/CoverImage';
+import SongItemCard from '@/components/SongItemCard';
 import Toast from '@/components/Toast';
 import SpotifyLoginButton from '@/components/SpotifyLoginButton';
 import { useI18n } from '@/lib/i18n';
@@ -299,6 +299,48 @@ export default function HomePage() {
     }
     return true;
   });
+  const visibleSongIds = filteredSongs.map((song) => song.id).join(',');
+  const songListRef = useRef<HTMLDivElement>(null);
+  const previousSongRectsRef = useRef<Map<string, DOMRect>>(new Map());
+
+  useLayoutEffect(() => {
+    const list = songListRef.current;
+    if (!list) return;
+
+    const currentRects = new Map<string, DOMRect>();
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    list.querySelectorAll<HTMLElement>('[data-song-card-id]').forEach((element) => {
+      const id = element.dataset.songCardId;
+      if (!id) return;
+      const nextRect = element.getBoundingClientRect();
+      currentRects.set(id, nextRect);
+
+      const previousRect = previousSongRectsRef.current.get(id);
+      if (!reduceMotion && previousRect) {
+        const deltaX = previousRect.left - nextRect.left;
+        const deltaY = previousRect.top - nextRect.top;
+        if (deltaX || deltaY) {
+          element.animate(
+            [
+              { transform: `translate(${deltaX}px, ${deltaY}px)` },
+              { transform: 'translate(0, 0)' },
+            ],
+            { duration: 360, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' },
+          );
+        }
+      } else if (!reduceMotion && previousSongRectsRef.current.size > 0) {
+        element.animate(
+          [
+            { opacity: 0, transform: 'translateY(8px) scale(0.985)' },
+            { opacity: 1, transform: 'translateY(0) scale(1)' },
+          ],
+          { duration: 280, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' },
+        );
+      }
+    });
+
+    previousSongRectsRef.current = currentRects;
+  }, [visibleSongIds]);
 
   return (
     <div className="fade-in">
@@ -552,46 +594,30 @@ export default function HomePage() {
           <p className="text-sm text-[var(--muted-foreground)]">{t('home.noResults')}</p>
         </div>
       ) : (
-        <div className="space-y-1.5 sm:space-y-2">
+        <div ref={songListRef} className="space-y-1.5 sm:space-y-2">
           {filteredSongs.map((song) => {
             const isPlaying = nowPlaying?.is_playing && isSongPlaying(song, nowPlaying.track, currentUser?.email);
             return (
-              <div
+              <SongItemCard
                 key={song.id}
-                className={`group flex items-center gap-3 sm:gap-4 rounded-lg bg-[var(--card)] border px-4 sm:px-5 py-3 sm:py-4 transition-colors hover:bg-[var(--muted)] cursor-pointer ${isPlaying ? 'border-[var(--success)]/50 bg-[var(--success-muted)]' : 'border-[var(--border)]'}`}
-                onClick={() => transitionRouter.push(`/songs/${song.id}`)}
-                onMouseEnter={() => { if ('connection' in navigator && (navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData !== true) { fetch(`/api/songs/${song.id}`).catch(() => {}); }}}
-              >
-                <CoverImage src={song.cover_url} alt={song.title} size="sm" viewTransitionName={`song-cover-${song.id}`} />
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium truncate flex items-center gap-2">
-                    <span className="cover-transition truncate" style={{ ['--vt-name' as string]: `song-title-${song.id}` }}>{song.title}</span>
-                    {isPlaying && <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--success)] animate-pulse shrink-0" />}
-                  </div>
-                  <div className="text-xs text-[var(--muted-foreground)] mt-0.5 truncate">
-                    <span className="cover-transition truncate" style={{ ['--vt-name' as string]: `song-artist-${song.id}` }}>{song.artist || t('common.unknownArtist')}</span>
-                  </div>
-                  {song.created_by_name && (
-                    <div className="text-[10px] text-[var(--muted-foreground)]/60 mt-0.5 truncate">{t('home.createdBy')}: {song.created_by_name}</div>
-                  )}
-                </div>
-                <div className="text-[10px] sm:text-[11px] text-[var(--muted-foreground)] hidden sm:block shrink-0">{new Date(song.updated_at).toLocaleDateString(localeToBCP47(locale))}</div>
-                <div className="flex items-center gap-0.5 shrink-0">
-                  {spotify?.connected && (
-                    <>
-                      <button onClick={(e) => { e.stopPropagation(); handleToggleFavorite(song.id); }} className={`rounded p-1.5 sm:p-2 transition-colors ${favorites.has(song.id) ? 'text-[var(--warning)]' : 'text-[var(--muted-foreground)] hover:text-[var(--warning)]'}`}>
-                        <Star className={`h-3.5 w-3.5 ${favorites.has(song.id) ? 'fill-current' : ''}`} />
-                      </button>
-                      <button onClick={(e) => { e.stopPropagation(); router.push(`/songs/${song.id}/share`); }} title={t('song.share')} aria-label={t('song.share')} className="rounded p-1.5 sm:p-2 text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--accent)] transition-colors">
-                        <Share2 className="h-3.5 w-3.5" />
-                      </button>
-                      <button onClick={(e) => { e.stopPropagation(); handleDelete(song.id, song.title); }} className="rounded p-1.5 sm:p-2 text-[var(--destructive)] hover:bg-[var(--destructive)]/10 transition-colors">
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
+                song={song}
+                isPlaying={isPlaying}
+                spotifyConnected={!!spotify?.connected}
+                isFavorite={favorites.has(song.id)}
+                locale={localeToBCP47(locale)}
+                unknownArtistLabel={t('common.unknownArtist')}
+                createdByLabel={t('home.createdBy')}
+                shareLabel={t('song.share')}
+                onOpen={() => transitionRouter.push(`/songs/${song.id}`)}
+                onPrefetch={() => {
+                  if ('connection' in navigator && (navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData !== true) {
+                    fetch(`/api/songs/${song.id}`).catch(() => {});
+                  }
+                }}
+                onToggleFavorite={() => handleToggleFavorite(song.id)}
+                onShare={() => router.push(`/songs/${song.id}/share`)}
+                onDelete={() => handleDelete(song.id, song.title)}
+              />
             );
           })}
         </div>

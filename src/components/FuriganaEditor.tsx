@@ -12,6 +12,33 @@ interface FuriganaEditorProps {
 
 type EditTarget = { lineIndex: number; segIndex: number } | null;
 
+const NON_EDITABLE_SEGMENT_RE = /^[\s\p{P}\p{S}\p{N}\p{Script=Latin}]+$/u;
+const isNonEditableDisplaySegment = (text: string) => NON_EDITABLE_SEGMENT_RE.test(text);
+
+type EditorDisplayPart =
+  | { kind: 'plain'; key: number; text: string }
+  | { kind: 'editable'; key: number; segment: FuriganaSegment; segmentIndex: number };
+
+function groupEditorDisplaySegments(segments: FuriganaSegment[]): EditorDisplayPart[] {
+  const parts: EditorDisplayPart[] = [];
+
+  segments.forEach((segment, segmentIndex) => {
+    if (isNonEditableDisplaySegment(segment.text)) {
+      const previous = parts[parts.length - 1];
+      if (previous?.kind === 'plain') {
+        previous.text += segment.text;
+      } else {
+        parts.push({ kind: 'plain', key: segmentIndex, text: segment.text });
+      }
+      return;
+    }
+
+    parts.push({ kind: 'editable', key: segmentIndex, segment, segmentIndex });
+  });
+
+  return parts;
+}
+
 export default function FuriganaEditor({ lines, rawLines, onChange }: FuriganaEditorProps) {
   const { t } = useI18n();
   const [active, setActive] = useState<EditTarget>(null);
@@ -144,6 +171,7 @@ export default function FuriganaEditor({ lines, rawLines, onChange }: FuriganaEd
     if (active.segIndex >= line.segments.length - 1) return;
     const current = line.segments[active.segIndex];
     const next = line.segments[active.segIndex + 1];
+    if (isNonEditableDisplaySegment(next.text)) return;
     const merged: FuriganaSegment = {
       text: current.text + next.text,
       reading: current.reading && next.reading
@@ -197,13 +225,16 @@ export default function FuriganaEditor({ lines, rawLines, onChange }: FuriganaEd
         <p className="text-sm text-[var(--muted-foreground)]">{t('furigana.empty')}</p>
       )}
       {lines.map((line, li) => {
+        // The converter preserves blank lyric rows as empty segments; do not render editor chrome for them.
+        if (line.segments.length === 0) return null;
+
         const raw = rawLines?.[li];
         const isActiveLine = active?.lineIndex === li;
         return (
           <div
             key={li}
             className={`rounded-lg border border-[var(--border)] bg-[var(--card)] p-3 sm:p-4 transition-colors ${
-              isActiveLine ? 'ring-1 ring-[var(--primary)]/30' : ''
+              isActiveLine ? 'ring-1 ring-[var(--song-accent)]/30' : ''
             }`}
           >
             <div className="mb-2 flex items-center justify-between gap-3">
@@ -215,34 +246,47 @@ export default function FuriganaEditor({ lines, rawLines, onChange }: FuriganaEd
               )}
             </div>
 
-            {line.segments.length === 0 ? (
-              <p className="text-xs text-[var(--muted-foreground)]">{t('furigana.noKanji')}</p>
-            ) : (
-              <div className="flex flex-wrap gap-2">
-                {line.segments.map((seg, si) => {
-                  const isActive = isActiveLine && active?.segIndex === si;
+            <div className="flex flex-wrap items-baseline gap-2">
+              {groupEditorDisplaySegments(line.segments).map((part) => {
+                if (part.kind === 'plain') {
                   return (
-                    <button
-                      key={si}
-                      type="button"
-                      onClick={() => startEdit(li, si)}
-                      className={`rounded-md border px-2 py-1 text-left text-sm transition-all ${
-                        isActive
-                          ? 'border-[var(--primary)] bg-[var(--primary)]/10 text-[var(--foreground)]'
-                          : seg.reading
-                            ? 'border-[var(--primary)]/30 bg-[var(--primary)]/10 text-[var(--foreground)] hover:bg-[var(--primary)]/15'
-                            : 'border-transparent bg-[var(--accent)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]'
-                      }`}
+                    <span
+                      key={part.key}
+                      className="whitespace-pre-wrap text-sm leading-7 text-[var(--muted-foreground)]"
                     >
-                      <span className="block">{seg.text}</span>
-                      {seg.reading && (
-                        <span className="block text-[10px] text-[var(--primary)]/80">{seg.reading}</span>
-                      )}
-                    </button>
+                      {part.text}
+                    </span>
                   );
-                })}
-              </div>
-            )}
+                }
+
+                const { segment: seg, segmentIndex: si } = part;
+                const isActive = isActiveLine && active?.segIndex === si;
+
+                return (
+                  <button
+                    key={part.key}
+                    type="button"
+                    onClick={() => startEdit(li, si)}
+                    className={`rounded-md border px-2 py-1 text-left text-sm transition-all ${
+                      isActive
+                        ? 'song-editor-token--active'
+                        : seg.reading
+                          ? 'song-editor-token--reading text-[var(--foreground)]'
+                          : 'border-transparent bg-[var(--accent)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]'
+                    }`}
+                  >
+                    <span className="block">{seg.text}</span>
+                    {seg.reading ? (
+                      <span className="song-editor-reading block text-[10px] leading-normal">{seg.reading}</span>
+                    ) : (
+                      <span aria-hidden="true" className="block select-none text-[10px] leading-normal text-transparent">
+                        &nbsp;
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
 
             {isActiveLine && activeSeg && (
               <div className="mt-3 flex flex-wrap items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--muted)] p-2 sm:p-3">
@@ -259,8 +303,8 @@ export default function FuriganaEditor({ lines, rawLines, onChange }: FuriganaEd
                         onClick={() => selectReading(reading)}
                         className={`rounded-md border px-2 py-1 text-xs font-medium transition-colors ${
                           reading === activeSeg.reading
-                            ? 'border-[var(--primary)]/50 bg-[var(--primary)]/10 text-[var(--primary)] hover:bg-[var(--primary)]/20'
-                            : 'border-[var(--border)] bg-[var(--card)] text-[var(--foreground)] hover:border-[var(--primary)]/40 hover:bg-[var(--accent)]'
+                            ? 'song-editor-choice--active'
+                            : 'border-[var(--border)] bg-[var(--card)] text-[var(--foreground)] hover:border-[var(--song-accent)]/40 hover:bg-[var(--accent)]'
                         }`}
                       >
                         {reading}
@@ -276,12 +320,12 @@ export default function FuriganaEditor({ lines, rawLines, onChange }: FuriganaEd
                   onChange={(e) => setDraft(e.target.value)}
                   onKeyDown={handleKeyDown}
                   placeholder={t('furigana.readingPlaceholder')}
-                  className="min-w-[120px] flex-1 rounded-md border border-[var(--border)] bg-[var(--input)] px-2 py-1.5 text-sm outline-none focus:border-[var(--primary)]"
+                  className="min-w-[120px] flex-1 rounded-md border border-[var(--border)] bg-[var(--input)] px-2 py-1.5 text-sm outline-none song-editor-input"
                 />
                 <button
                   type="button"
                   onClick={commitReading}
-                  className="rounded-md bg-[var(--primary)] px-3 py-1.5 text-xs font-medium text-[var(--primary-foreground)] transition-opacity hover:opacity-90"
+                  className="song-editor-primary-button rounded-md px-3 py-1.5 text-xs font-medium transition-opacity hover:opacity-90"
                 >
                   {t('common.save')}
                 </button>
@@ -310,7 +354,8 @@ export default function FuriganaEditor({ lines, rawLines, onChange }: FuriganaEd
                     {t('furigana.split')}
                   </button>
                 )}
-                {active.segIndex < lines[active.lineIndex].segments.length - 1 && (
+                {active.segIndex < lines[active.lineIndex].segments.length - 1 &&
+                  !isNonEditableDisplaySegment(lines[active.lineIndex].segments[active.segIndex + 1].text) && (
                   <button
                     type="button"
                     onClick={mergeNext}
@@ -323,7 +368,7 @@ export default function FuriganaEditor({ lines, rawLines, onChange }: FuriganaEd
                   <button
                     type="button"
                     onClick={applyAll}
-                    className="rounded-md px-3 py-1.5 text-xs font-medium text-[var(--primary)] bg-[var(--primary)]/10 hover:bg-[var(--primary)]/20 transition-colors"
+                    className="rounded-md px-3 py-1.5 text-xs font-medium text-[var(--song-accent)] bg-[var(--song-accent)]/10 hover:bg-[var(--song-accent)]/20 transition-colors"
                   >
                     {t('furigana.applyAll', { count: String(sameWordCount) })}
                   </button>

@@ -6,6 +6,7 @@ import { useRouter, useParams } from 'next/navigation';
 import { Upload } from 'lucide-react';
 import Toast from '@/components/Toast';
 import { useI18n } from '@/lib/i18n';
+import { useCoverTheme } from '@/hooks/useCoverPalette';
 
 type LyricsMode = 'text' | 'lrc';
 
@@ -15,6 +16,7 @@ interface SongData {
   artist: string;
   lyrics_raw: string;
   lyrics_synced: string;
+  cover_url?: string | null;
 }
 
 export default function EditSongPage() {
@@ -26,12 +28,16 @@ export default function EditSongPage() {
   const [artist, setArtist] = useState('');
   const [plainLyrics, setPlainLyrics] = useState('');
   const [syncedLyrics, setSyncedLyrics] = useState('');
+  const [coverUrl, setCoverUrl] = useState<string | null>(null);
   const [lyricsMode, setLyricsMode] = useState<LyricsMode>('text');
   const [lyricsChanged, setLyricsChanged] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const coverTheme = useCoverTheme(coverUrl);
+  const coverColor = coverTheme.palette;
+  const songThemeStyle = coverTheme.style;
 
   const showToast = (type: 'success' | 'error', msg: string) => {
     setToast({ type, msg });
@@ -50,6 +56,17 @@ export default function EditSongPage() {
         setArtist(data.artist);
         setPlainLyrics(data.lyrics_raw || '');
         setSyncedLyrics(data.lyrics_synced || '');
+        setCoverUrl(data.cover_url ?? null);
+        if (!data.cover_url) {
+          fetch(`/api/songs/${id}/cover`)
+            .then(async (coverResponse) => {
+              if (!coverResponse.ok) return null;
+              const coverData = await coverResponse.json() as { cover_url?: string | null };
+              return coverData.cover_url ?? null;
+            })
+            .then((url) => { if (url) setCoverUrl(url); })
+            .catch(() => {});
+        }
         setLyricsMode(data.lyrics_synced ? 'lrc' : 'text');
         setLoading(false);
       })
@@ -119,7 +136,7 @@ export default function EditSongPage() {
   const radioCls = (mode: LyricsMode) =>
     `flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium cursor-pointer transition-colors ${
       lyricsMode === mode
-        ? 'bg-[var(--primary)]/15 text-[var(--primary)] border border-[var(--primary)]/30'
+        ? 'song-editor-choice--active border'
         : 'bg-[var(--accent)] text-[var(--muted-foreground)] border border-transparent hover:text-[var(--foreground)]'
     }`;
 
@@ -134,7 +151,7 @@ export default function EditSongPage() {
   const lyrics = lyricsMode === 'lrc' ? syncedLyrics : plainLyrics;
 
   return (
-    <div className="fade-in max-w-2xl">
+    <div className={`song-view song-editor-page fade-in max-w-2xl${coverColor ? ' song-view--accented' : ''}`} style={songThemeStyle}>
       <div className="mb-6 sm:mb-8 flex items-center gap-1.5 text-xs text-[var(--muted-foreground)]">
         <Link href="/" className="hover:text-[var(--foreground)] transition-colors">{t('common.list')}</Link>
         <span className="opacity-40">/</span>
@@ -156,7 +173,7 @@ export default function EditSongPage() {
             type="text"
             value={title}
             onChange={(event) => setTitle(event.target.value)}
-            className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 sm:px-4 py-2.5 text-sm outline-none focus:border-[var(--primary)] transition-colors"
+            className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 sm:px-4 py-2.5 text-sm outline-none song-editor-input transition-colors"
           />
         </div>
 
@@ -166,7 +183,7 @@ export default function EditSongPage() {
             type="text"
             value={artist}
             onChange={(event) => setArtist(event.target.value)}
-            className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 sm:px-4 py-2.5 text-sm outline-none focus:border-[var(--primary)] transition-colors"
+            className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 sm:px-4 py-2.5 text-sm outline-none song-editor-input transition-colors"
           />
         </div>
 
@@ -197,7 +214,7 @@ export default function EditSongPage() {
             onChange={(event) => handleLyricsChange(event.target.value)}
             placeholder={lyricsMode === 'lrc' ? t('new.lrcPlaceholder') : t('new.lyricsPlaceholder')}
             rows={12}
-            className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 sm:px-4 py-3 text-sm outline-none focus:border-[var(--primary)] transition-colors resize-y leading-relaxed font-mono placeholder:text-[var(--muted-foreground)]/50"
+            className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 sm:px-4 py-3 text-sm outline-none song-editor-input transition-colors resize-y leading-relaxed font-mono placeholder:text-[var(--muted-foreground)]/50"
           />
           <p className="mt-2 text-[11px] text-[var(--muted-foreground)]">
             {lyricsMode === 'lrc' ? t('new.lyricsHint') : t('edit.furiganaHint')}
@@ -208,7 +225,7 @@ export default function EditSongPage() {
           <button
             onClick={handleSave}
             disabled={saving}
-            className="rounded-md bg-[var(--primary)] px-5 py-2.5 text-sm font-medium text-[var(--primary-foreground)] transition-opacity hover:opacity-90 disabled:opacity-50"
+            className="song-editor-primary-button rounded-md px-5 py-2.5 text-sm font-medium transition-opacity disabled:opacity-50"
           >
             {saving ? t('edit.converting') : t('common.save')}
           </button>
