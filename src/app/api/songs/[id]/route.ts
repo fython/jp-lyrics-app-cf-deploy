@@ -3,13 +3,13 @@ import { getDB, schema, sql } from '@/lib/db';
 import { eq } from 'drizzle-orm';
 import type { Song } from '@/lib/types';
 import { getAuthUser } from '@/lib/auth';
-import { parseLrc } from '@/lib/lrc';
+import { resolveLrcTextUpdate } from '@/lib/lrc';
 
-/** Strip internal email from song response */
-function sanitizeSong(song: Song) {
+/** Strip internal email while exposing server-authoritative capabilities. */
+function sanitizeSong(song: Song, canEdit: boolean) {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { created_by, ...rest } = song;
-  return rest;
+  return { ...rest, permissions: { can_edit: canEdit } };
 }
 
 const songFields = {
@@ -20,6 +20,15 @@ const songFields = {
   lyrics_furigana: schema.songs.lyricsFurigana,
   lyrics_synced: schema.songs.lyricsSynced,
   cover_url: schema.songs.coverUrl,
+  spotify_track_id: schema.songs.spotifyTrackId,
+  spotify_uri: schema.songs.spotifyUri,
+  spotify_album: schema.songs.spotifyAlbum,
+  spotify_duration_ms: schema.songs.spotifyDurationMs,
+  spotify_canonical_title: schema.songs.spotifyCanonicalTitle,
+  spotify_canonical_artist: schema.songs.spotifyCanonicalArtist,
+  lyrics_source: schema.songs.lyricsSource,
+  lyrics_confidence: schema.songs.lyricsConfidence,
+  lyrics_fetched_at: schema.songs.lyricsFetchedAt,
   created_by: schema.songs.createdBy,
   created_by_name: schema.songs.createdByName,
   is_public: schema.songs.isPublic,
@@ -43,7 +52,8 @@ export async function GET(
   if (!song || (song.is_public !== 1 && !user?.isAdmin && song.created_by !== user?.id)) {
     return NextResponse.json({ error: 'song_not_found' }, { status: 404 });
   }
-  return NextResponse.json(sanitizeSong(song));
+  const canEdit = !!user && (user.isAdmin || song.created_by === user.id);
+  return NextResponse.json(sanitizeSong(song, canEdit));
 }
 
 // PUT /api/songs/[id] - update song
@@ -70,10 +80,11 @@ export async function PUT(
   }
 
   const newSynced = lyrics_synced !== undefined ? lyrics_synced : existing.lyrics_synced;
-  // Timed LRC is authoritative when it is submitted on its own, matching song creation.
-  const newRaw = lyrics_synced !== undefined && lyrics_raw === undefined
-    ? parseLrc(lyrics_synced).map((line) => line.text).join('\n')
-    : (lyrics_raw !== undefined ? lyrics_raw : existing.lyrics_raw);
+  const syncedUpdate = lyrics_synced !== undefined
+    ? resolveLrcTextUpdate(existing.lyrics_raw, existing.lyrics_synced, lyrics_synced)
+    : { lyricsRaw: existing.lyrics_raw, contentChanged: false };
+  // Timestamp-only edits must not rewrite plain lyrics or erase manual furigana corrections.
+  const newRaw = lyrics_raw !== undefined ? lyrics_raw : syncedUpdate.lyricsRaw;
 
   let lyricsFurigana = existing.lyrics_furigana;
   // Clear furigana whenever the rendered plain lyrics change.
@@ -81,12 +92,18 @@ export async function PUT(
     lyricsFurigana = '[]';
   }
 
+  const lyricsContentChanged = newRaw !== existing.lyrics_raw;
   await db.update(schema.songs).set({
     title: title !== undefined ? title : existing.title,
     artist: artist !== undefined ? artist : existing.artist,
     lyricsRaw: newRaw,
     lyricsFurigana,
     lyricsSynced: newSynced,
+    ...(lyricsContentChanged ? {
+      lyricsSource: 'manual',
+      lyricsConfidence: 100,
+      lyricsFetchedAt: null,
+    } : {}),
     updatedAt: sql`(datetime('now', 'localtime'))`,
   }).where(eq(schema.songs.id, id));
 
@@ -94,7 +111,7 @@ export async function PUT(
   if (!updated) {
     return NextResponse.json({ error: 'song_not_found' }, { status: 404 });
   }
-  return NextResponse.json(sanitizeSong(updated));
+  return NextResponse.json(sanitizeSong(updated, true));
 }
 
 // DELETE /api/songs/[id] - delete song

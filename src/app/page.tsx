@@ -12,12 +12,14 @@ import { useI18n } from '@/lib/i18n';
 import { findBestMatch, isSongPlaying } from '@/lib/match';
 import { useNowPlaying } from '@/hooks/useNowPlaying';
 import { useAuthSession } from '@/lib/auth-session';
+import { cacheSongCovers } from '@/lib/song-cover-cache';
 
 interface SongItem {
   id: string;
   title: string;
   artist: string;
   cover_url?: string | null;
+  spotify_track_id?: string | null;
   created_by: string;
   created_by_name: string;
   is_public: number;
@@ -97,6 +99,28 @@ export default function HomePage() {
   const [collectionSongs, setCollectionSongs] = useState<Set<string>>(new Set());
   const router = useRouter();
   const transitionRouter = useTransitionRouter();
+  const nowPlayingCardRef = useRef<HTMLDivElement>(null);
+  const updateNowPlayingPointer = (event: React.PointerEvent<HTMLDivElement>) => {
+    const card = nowPlayingCardRef.current;
+    if (!card) return;
+    const rect = card.getBoundingClientRect();
+    card.style.setProperty('--now-playing-pointer-x', `${event.clientX - rect.left}px`);
+    card.style.setProperty('--now-playing-pointer-y', `${event.clientY - rect.top}px`);
+  };
+  const setNowPlayingTouching = (touching: boolean) => {
+    const card = nowPlayingCardRef.current;
+    if (!card) return;
+    if (touching) card.dataset.touching = 'true';
+    else delete card.dataset.touching;
+  };
+  const handleNowPlayingPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    updateNowPlayingPointer(event);
+    if (event.pointerType === 'touch') setNowPlayingTouching(true);
+  };
+  const handleNowPlayingPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === 'touch') setNowPlayingTouching(false);
+  };
+  const handleNowPlayingPointerCancel = () => setNowPlayingTouching(false);
   const searchParams = useSearchParams();
 
   const showToast = (type: 'success' | 'error', msg: string) => {
@@ -136,12 +160,13 @@ export default function HomePage() {
     const cached = getCachedSongs();
     if (cached) {
       setSongs(cached);
+      cacheSongCovers(cached);
       setLoading(false);
     }
 
     fetch('/api/songs')
       .then((r) => r.json())
-      .then((data) => { setSongs(data); setCachedSongs(data); setLoading(false); })
+      .then((data) => { setSongs(data); cacheSongCovers(data); setCachedSongs(data); setLoading(false); })
       .catch(() => setLoading(false));
   }, []);
 
@@ -163,7 +188,7 @@ export default function HomePage() {
     const params = mySongsOnly ? '?mine=1' : '';
     fetch(`/api/songs${params}`)
       .then((r) => r.json())
-      .then((data) => setSongs(data))
+      .then((data) => { setSongs(data); cacheSongCovers(data); })
       .catch(() => {});
   }, [mySongsOnly]);
 
@@ -204,7 +229,7 @@ export default function HomePage() {
       const res = await fetch('/api/songs/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: nowPlaying.track.name, artist: nowPlaying.track.artist }),
+        body: JSON.stringify({ title: nowPlaying.track.name, artist: nowPlaying.track.artist, spotify_track_id: nowPlaying.track.id }),
       });
       const data = await res.json();
       if (!res.ok || data.error) {
@@ -240,6 +265,7 @@ export default function HomePage() {
       if (songsRes.ok) {
         const data = await songsRes.json();
         setSongs(data);
+        cacheSongCovers(data);
         setCachedSongs(data);
       }
     } catch {
@@ -543,7 +569,16 @@ export default function HomePage() {
       <div className={`now-playing-slot ${nowPlaying?.is_playing && nowPlaying.track ? 'now-playing-slot--visible' : ''}`}>
         <div className="now-playing-reveal">
           {nowPlaying?.is_playing && nowPlaying.track && (
-            <div className="now-playing-card rounded-lg bg-[var(--card)] border border-[var(--border)] p-3 sm:p-4 flex items-center gap-3">
+            <div
+              ref={nowPlayingCardRef}
+              className="now-playing-card rounded-lg bg-[var(--card)] border border-[var(--border)] p-3 sm:p-4 flex items-center gap-3"
+              onPointerEnter={updateNowPlayingPointer}
+              onPointerMove={updateNowPlayingPointer}
+              onPointerDown={handleNowPlayingPointerDown}
+              onPointerUp={handleNowPlayingPointerUp}
+              onPointerCancel={handleNowPlayingPointerCancel}
+              onPointerLeave={handleNowPlayingPointerCancel}
+            >
               <div className="relative shrink-0">
                 <Music className="h-5 w-5 text-[var(--success)]" />
                 <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-[var(--success)] animate-pulse" />
