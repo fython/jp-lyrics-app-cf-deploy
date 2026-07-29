@@ -32,7 +32,7 @@ const EMPTY_SONG_IDS = new Set<string>();
 
 function localeToBCP47(locale: string): string {
   const map: Record<string, string> = { ja: 'ja-JP', en: 'en-US', 'zh-CN': 'zh-CN', 'zh-TW': 'zh-TW' };
-  return map[locale] ?? 'ja-JP';
+  return map[locale] ?? 'zh-CN';
 }
 
 const importErrorKeyMap: Record<string, string> = {
@@ -48,7 +48,7 @@ const importErrorKeyMap: Record<string, string> = {
 function importErrorMsg(t: (k: string) => string, error?: string, fallbackKey?: string): string {
   if (!error) return fallbackKey ? t(fallbackKey) : error || '';
   const key = importErrorKeyMap[error];
-  return key ? t(key) : error;
+  return key ? t(key) : t(fallbackKey || 'home.importFailed');
 }
 
 const SONGS_CACHE_KEY = 'jplrc:songs:list';
@@ -453,14 +453,14 @@ export default function HomePage() {
 
       {/* Search & Filter */}
       <div className="mb-4 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[var(--muted-foreground)]" />
+        <div className="home-search-shell relative flex-1">
+          <Search className="home-search-icon absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[var(--muted-foreground)]" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder={t('home.search')}
-            className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] pl-9 pr-8 py-2 text-xs outline-none focus:border-[var(--primary)] transition-colors placeholder:text-[var(--muted-foreground)]/50"
+            className="home-search-field w-full rounded-md border border-[var(--border)] bg-[var(--input)] pl-9 pr-8 py-2 text-xs outline-none placeholder:text-[var(--muted-foreground)]/50"
           />
           {searchQuery && (
             <button onClick={() => setSearchQuery('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)] hover:text-[var(--foreground)]">

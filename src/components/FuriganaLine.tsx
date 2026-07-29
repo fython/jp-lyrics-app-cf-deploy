@@ -2,9 +2,14 @@
 
 import { useRef, useEffect, useState } from 'react';
 import { Copy, Languages, Share2 } from 'lucide-react';
-import type { FuriganaLine, ReadingMode } from '@/lib/types';
+import type { FuriganaLine, ReadingMode, ReadingScheme } from '@/lib/types';
 import { fmtMs } from '@/lib/lrc';
-import { romanizeJapanese } from '@/lib/romaji';
+import {
+  isKatakanaReadingSegment,
+  isKoreanReadingSegment,
+  normalizeFuriganaSegments,
+  resolveFuriganaReading,
+} from '@/lib/romaji';
 import { useI18n } from '@/lib/i18n';
 import {
   ContextMenu,
@@ -25,6 +30,8 @@ export default function FuriganaLineView({
   onCorrectFurigana,
   canCorrectFurigana = true,
   readingMode = 'furigana',
+  romanizeFurigana = false,
+  readingScheme = 'ja-kana',
 }: {
   line: FuriganaLine;
   isActive: boolean;
@@ -36,6 +43,8 @@ export default function FuriganaLineView({
   onCorrectFurigana?: () => void;
   canCorrectFurigana?: boolean;
   readingMode?: ReadingMode;
+  romanizeFurigana?: boolean;
+  readingScheme?: ReadingScheme;
 }) {
   const { t } = useI18n();
   const [animKey, setAnimKey] = useState(0);
@@ -69,15 +78,22 @@ export default function FuriganaLineView({
         } ${onSeek && timestamp != null ? 'hover:!opacity-100' : ''}`}
         style={{ fontWeight: isActive ? 700 : 400 }}
       >
-        {line.segments.map((seg, i) => {
+        {normalizeFuriganaSegments(line.segments).map((seg, i) => {
           if (readingMode === 'original') return <span key={i}>{seg.text}</span>;
-          if (readingMode === 'furigana' && !seg.reading) return <span key={i}>{seg.text}</span>;
-          const reading = readingMode === 'romaji'
-            ? romanizeJapanese(seg.reading || seg.text)
-            : seg.reading;
-          if (!reading || reading === seg.text) return <span key={i}>{seg.text}</span>;
+          const reading = resolveFuriganaReading(seg.text, seg.reading, romanizeFurigana, readingScheme);
+          if (!reading) return <span key={i}>{seg.text}</span>;
+          const cantoneseReading = readingScheme === 'yue-jyutping';
+          const koreanWord = romanizeFurigana && isKoreanReadingSegment(seg.text);
+          const katakanaChunk = romanizeFurigana && isKatakanaReadingSegment(seg.text);
+          const rubyClass = cantoneseReading
+            ? 'lyric-ruby--cantonese'
+            : koreanWord
+              ? 'lyric-ruby--korean'
+              : katakanaChunk ? 'lyric-ruby--katakana' : undefined;
           return (
-            <ruby key={i}>{seg.text}<rp>(</rp><rt lang={readingMode === 'romaji' ? 'en' : 'ja'}>{reading}</rt><rp>)</rp></ruby>
+            <ruby key={i} className={rubyClass}>
+              {seg.text}<rp>(</rp><rt lang={cantoneseReading ? 'yue-Latn' : romanizeFurigana ? 'en' : 'ja'}>{reading}</rt><rp>)</rp>
+            </ruby>
           );
         })}
       </div>

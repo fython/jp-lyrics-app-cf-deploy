@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } fro
 import { useRouter, useParams } from 'next/navigation';
 import { useTransitionRouter } from 'next-view-transitions';
 import Link from 'next/link';
-import { RefreshCw, Bug, Clock3, Pencil, Trash2, ArrowLeft, Minus, Plus, Music, Download, Loader2, ExternalLink, ClipboardPaste, PictureInPicture, Repeat, Copy, Check, MoreVertical, Languages, ChevronDown, Share2, Info, X } from 'lucide-react';
+import { RefreshCw, Bug, Clock3, Pencil, Trash2, ArrowLeft, Minus, Plus, Music, Download, Loader2, ExternalLink, PictureInPicture, Repeat, Copy, Check, MoreVertical, Languages, ChevronDown, Share2, Info, X } from 'lucide-react';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import CoverImage from '@/components/CoverImage';
 import FuriganaLineView from '@/components/FuriganaLine';
@@ -459,17 +459,24 @@ export default function SongViewPage() {
             </Link>
 
             <ToolbarMenu
-              label={<span className="inline-flex items-center gap-1"><Languages className="h-3.5 w-3.5" /> {t(data.readingMode === 'original' ? 'song.readingOriginal' : data.readingMode === 'romaji' ? 'song.readingRomaji' : 'song.readingFurigana')} <ChevronDown className="h-3 w-3 opacity-60" /></span>}
-              items={([
-                ['original', 'song.readingOriginal'],
-                ['furigana', 'song.readingFurigana'],
-                ['romaji', 'song.readingRomaji'],
-              ] as const).map(([mode, label]) => ({
-                icon: <Languages className="h-3.5 w-3.5" />,
-                label: t(label),
-                active: data.readingMode === mode,
-                onClick: () => data.setReadingMode(mode),
-              }))}
+              label={<span className="inline-flex items-center gap-1"><Languages className="h-3.5 w-3.5" /> {t(data.readingMode === 'original' ? 'song.readingOriginal' : song.reading_scheme === 'yue-jyutping' ? 'song.readingJyutping' : 'song.readingFurigana')} <ChevronDown className="h-3 w-3 opacity-60" /></span>}
+              items={[
+                ...([
+                  ['original', 'song.readingOriginal'],
+                  ['furigana', song.reading_scheme === 'yue-jyutping' ? 'song.readingJyutping' : 'song.readingFurigana'],
+                ] as const).map(([mode, label]) => ({
+                  icon: <Languages className="h-3.5 w-3.5" />,
+                  label: t(label),
+                  active: data.readingMode === mode,
+                  onClick: () => data.setReadingMode(mode),
+                })),
+                ...(song.reading_scheme === 'yue-jyutping' ? [] : [{
+                  icon: <Languages className="h-3.5 w-3.5" />,
+                  label: t('song.romanizeFurigana'),
+                  status: t(data.romanizeFurigana ? 'common.on' : 'common.off'),
+                  onClick: () => data.setRomanizeFurigana(!data.romanizeFurigana),
+                }]),
+              ]}
             />
 
             <ToolbarMenu
@@ -502,7 +509,7 @@ export default function SongViewPage() {
                 {
                   icon: <Bug className="h-3.5 w-3.5" />,
                   label: t('song.debug'),
-                  active: data.debug,
+                  status: t(data.debug ? 'common.on' : 'common.off'),
                   onClick: () => data.setDebug(!data.debug),
                 },
                 {
@@ -511,12 +518,7 @@ export default function SongViewPage() {
                   onClick: data.handleSync,
                   disabled: data.syncing || !canEdit,
                 },
-                ...(!hasSyncData ? [{
-                  icon: <ClipboardPaste className="h-3.5 w-3.5" />,
-                  label: t('song.paste'),
-                  onClick: () => data.setShowPasteLrc(!data.showPasteLrc),
-                  disabled: !canEdit,
-                } as const] : []),
+
                 {
                   icon: <Download className="h-3.5 w-3.5" />,
                   label: '.txt',
@@ -619,14 +621,24 @@ export default function SongViewPage() {
         {/* Debug panel */}
         {data.debug && (
           <div className="mt-3 rounded-md bg-[var(--muted)] border border-[var(--border)] p-2 sm:p-3 text-[10px] sm:text-[11px] font-mono space-y-1 overflow-x-auto">
-            <div className="text-[var(--song-accent)] font-medium mb-1.5">Debug Info</div>
-            <div>Spotify: {spotify?.connected ? '✓ connected' : '✗ disconnected'} | playing: {String(!!spotify?.is_playing)} | same: {String(isSameSong)} | synced: {String(isSynced)}</div>
-            <div>progress: {spotify ? `${spotify.progress_ms}ms (${fmtTime(spotify.progress_ms)})` : '—'} / {spotify ? `${spotify.duration_ms}ms (${fmtTime(spotify.duration_ms)})` : '—'}</div>
-            <div>sync: {syncLines.length} | furigana: {furiganaLines.length} | active: #{activeLine} ({activeLine >= 0 && lineTimestamps[activeLine] != null ? fmtMs(lineTimestamps[activeLine]!) : '—'}) | sync: #{debugSyncActive}</div>
-            <div>track: {spotify?.track?.name || '—'} | song: {song.title}</div>
+            <div className="text-[var(--song-accent)] font-medium mb-1.5">{t('song.debugInfo')}</div>
+            <div>{t('song.debugConnection', {
+              connection: spotify?.connected ? `✓ ${t('song.debugConnected')}` : `✗ ${t('song.debugDisconnected')}`,
+              playing: String(!!spotify?.is_playing),
+              same: String(isSameSong),
+              synced: String(isSynced),
+            })}</div>
+            <div>{t('song.debugProgress')}: {spotify ? `${spotify.progress_ms}ms (${fmtTime(spotify.progress_ms)})` : '—'} / {spotify ? `${spotify.duration_ms}ms (${fmtTime(spotify.duration_ms)})` : '—'}</div>
+            <div>{t('song.debugCounts', {
+              sync: String(syncLines.length),
+              furigana: String(furiganaLines.length),
+              active: `#${activeLine} (${activeLine >= 0 && lineTimestamps[activeLine] != null ? fmtMs(lineTimestamps[activeLine]!) : '—'})`,
+              syncActive: `#${debugSyncActive}`,
+            })}</div>
+            <div>{t('song.debugTrack', { track: spotify?.track?.name || '—', song: song.title })}</div>
             {syncLines.length > 0 && (
               <div className="pt-1.5 mt-1.5 border-t border-[var(--border)]">
-                <div className="text-[var(--muted-foreground)] mb-1">Synced timestamps ({syncLines.length} lines):</div>
+                <div className="text-[var(--muted-foreground)] mb-1">{t('song.debugTimestamps', { count: String(syncLines.length) })}</div>
                 <div className="max-h-40 overflow-y-auto space-y-0.5">
                   {syncLines.map((sl, i) => (
                     <div key={i} className={i === debugSyncActive ? 'text-[var(--success)] font-medium' : 'text-[var(--muted-foreground)]'}>[{fmtMs(sl.timeMs)}] {sl.text}</div>
@@ -637,21 +649,31 @@ export default function SongViewPage() {
           </div>
         )}
 
-        {/* Paste LRC UI */}
-        {(data.showPasteLrc || data.syncError) && !hasSyncData && (
-          <div className="mt-3 rounded-md bg-[var(--muted)] border border-[var(--border)] p-3 sm:p-4">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-medium text-[var(--foreground)]">{t('song.pasteLrcTitle')}</span>
-              {data.syncError && <span className="text-[10px] text-[var(--destructive)]">{data.syncError}</span>}
-            </div>
-            <textarea value={data.pasteLrcText} onChange={(e) => data.setPasteLrcText(e.target.value)} placeholder={t('song.pasteLrcPlaceholder')} rows={6} className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-xs font-mono outline-none focus:border-[var(--song-accent)] transition-colors placeholder:text-[var(--muted-foreground)]/40 resize-y" />
-            <div className="flex items-center gap-2 mt-2">
-              <button onClick={data.handlePasteLrc} disabled={!data.pasteLrcText.trim()} className="song-editor-primary-button rounded-md px-3 py-1.5 text-xs font-medium transition-opacity hover:opacity-90 disabled:opacity-50">{t('common.save')}</button>
-              <button onClick={() => { data.setShowPasteLrc(false); data.setPasteLrcText(''); }} className="rounded-md px-3 py-1.5 text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors">{t('common.cancel')}</button>
-            </div>
-          </div>
-        )}
       </div>
+      {data.cantoneseSuggestion && (
+        <div className="mb-3 flex shrink-0 flex-col gap-3 rounded-lg border border-[var(--song-accent)]/25 bg-[var(--accent)]/60 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-[var(--foreground)]">{t('song.cantoneseSuggestionTitle')}</p>
+            <p className="mt-1 text-[11px] leading-relaxed text-[var(--muted-foreground)]">{t('song.cantoneseSuggestionDescription')}</p>
+          </div>
+          <div className="flex shrink-0 gap-2">
+            <button
+              type="button"
+              onClick={() => void data.setSongReadingScheme('yue-jyutping')}
+              className="song-editor-primary-button rounded-md px-3 py-2 text-xs font-medium"
+            >
+              {t('song.useJyutping')}
+            </button>
+            <button
+              type="button"
+              onClick={() => void data.dismissCantoneseSuggestion()}
+              className="rounded-md px-3 py-2 text-xs text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+            >
+              {t('common.notNow')}
+            </button>
+          </div>
+        </div>
+      )}
       <div className="lyrics-panel-shell relative isolate flex-1 min-h-0" style={lyricPanelStyle}>
         <div className="lyrics-ambient-breath" aria-hidden="true" />
         <div className="lyrics-ambient-orbit" aria-hidden="true" />
@@ -672,6 +694,8 @@ export default function SongViewPage() {
                     onCorrectFurigana={() => router.push(`/songs/${id}/furigana/edit`)}
                     canCorrectFurigana={canEdit}
                     readingMode={data.readingMode}
+                    romanizeFurigana={data.romanizeFurigana}
+                    readingScheme={song.reading_scheme}
                   />
                 </div>
               ))
@@ -695,26 +719,26 @@ export default function SongViewPage() {
       </div>
 
       {/* Compact metadata footer */}
-      <div className="shrink-0 mt-2 sm:mt-4 flex items-center justify-between gap-2">
+      <div className={`shrink-0 mt-2 sm:mt-4 items-center justify-between gap-2 ${spotify?.connected ? 'hidden sm:flex' : 'flex'}`}>
         <button
           type="button"
           onClick={() => setShowSongInfo(true)}
-          className="song-accent-button inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[11px] font-medium"
+          className="song-accent-button hidden h-8 items-center gap-1.5 rounded-md px-2.5 text-[11px] font-medium sm:inline-flex"
           aria-haspopup="dialog"
         >
           <Info className="h-3.5 w-3.5" />
           {t('song.info')}
         </button>
         {!spotify?.connected && (
-          <SpotifyLoginButton className="text-[11px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors disabled:opacity-60">{t('song.spotify')}</SpotifyLoginButton>
+          <SpotifyLoginButton className="ml-auto text-[11px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors disabled:opacity-60">{t('song.spotify')}</SpotifyLoginButton>
         )}
       </div>
 
       {/* Mobile bottom toolbar */}
       <MobileMenu
         data={data} sync={sync} song={song} id={id} router={router}
-        furiganaLines={furiganaLines} hasSyncData={hasSyncData} pipSupported={pipSupported}
-        onOpenPiP={handleOpenPiP} canEdit={canEdit}
+        furiganaLines={furiganaLines} pipSupported={pipSupported}
+        onOpenPiP={handleOpenPiP} onShowSongInfo={() => setShowSongInfo(true)} canEdit={canEdit}
       />
 
       {data.toast && <Toast type={data.toast.type} message={data.toast.msg} />}
@@ -803,6 +827,7 @@ export default function SongViewPage() {
 type ToolbarMenuItem = {
   icon?: ReactNode;
   label: ReactNode;
+  status?: ReactNode;
   active?: boolean;
   danger?: boolean;
   disabled?: boolean;
@@ -882,66 +907,84 @@ function ToolbarMenu({ label, items }: { label: ReactNode; items: ToolbarMenuIte
 
   return (
     <div className="relative" ref={ref}>
-      <button onClick={() => setOpen(!open)} className={btnTextCls(open)}>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className={`${btnTextCls(open)} song-menu-trigger`}
+        data-open={open}
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
         {label}
       </button>
-      {open && (
-        <div className="absolute right-0 top-full mt-1 z-50 rounded-lg bg-[var(--card)] border border-[var(--border)] shadow-lg py-1 min-w-[160px]">
-          {items.map((item, i) => {
-            const base = "w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left transition-colors disabled:opacity-50";
-            const cls = item.danger
-              ? `${base} text-[var(--destructive)] hover:bg-[var(--destructive)]/10`
-              : item.active
-                ? `${base} text-[var(--song-accent)] bg-[var(--song-accent)]/10`
-                : `${base} text-[var(--foreground)] hover:bg-[var(--accent)]`;
-            if (item.href) {
-              return (
-                <a key={i} href={item.href} onClick={() => setOpen(false)} className={cls}>
-                  {item.icon}
-                  <span>{item.label}</span>
-                </a>
-              );
-            }
+      <div
+        role="menu"
+        aria-hidden={!open}
+        data-open={open}
+        className="song-menu-popover song-menu-popover--desktop absolute right-0 top-full z-50 mt-1 min-w-[160px] rounded-lg border border-[var(--border)] bg-[var(--card)] py-1 shadow-lg"
+      >
+        {items.map((item, i) => {
+          const base = "song-menu-item w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left disabled:opacity-50";
+          const cls = item.danger
+            ? `${base} text-[var(--destructive)] hover:bg-[var(--destructive)]/10`
+            : item.active
+              ? `${base} text-[var(--song-accent)] bg-[var(--song-accent)]/10`
+              : `${base} text-[var(--foreground)] hover:bg-[var(--accent)]`;
+          if (item.href) {
             return (
-              <button
-                key={i}
-                onClick={() => { item.onClick?.(); setOpen(false); }}
-                disabled={item.disabled}
-                className={cls}
-              >
+              <a key={i} role="menuitem" data-menu-item href={item.href} onClick={() => setOpen(false)} className={cls}>
                 {item.icon}
-                <span>{item.label}</span>
-              </button>
+                <span className="min-w-0 flex-1">{item.label}</span>
+                {item.status && <span className="ml-auto text-[10px] text-[var(--muted-foreground)]">{item.status}</span>}
+              </a>
             );
-          })}
-        </div>
-      )}
+          }
+          return (
+            <button
+              type="button"
+              role="menuitem"
+              data-menu-item
+              key={i}
+              onClick={() => { item.onClick?.(); setOpen(false); }}
+              disabled={item.disabled}
+              className={cls}
+            >
+              {item.icon}
+              <span className="min-w-0 flex-1">{item.label}</span>
+              {item.status && <span className="ml-auto text-[10px] text-[var(--muted-foreground)]">{item.status}</span>}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
 
 /** Mobile bottom toolbar — A-/A+, Sync, Copy visible; rest in 3-dot menu */
-function MobileMenu({ data, sync, song, id, router, furiganaLines, hasSyncData, pipSupported, onOpenPiP, canEdit }: {
+function MobileMenu({ data, sync, song, id, router, furiganaLines, pipSupported, onOpenPiP, onShowSongInfo, canEdit }: {
   data: ReturnType<typeof useSongData>;
   sync: ReturnType<typeof useSpotifySync>;
   song: NonNullable<ReturnType<typeof useSongData>['song']>;
   id: string;
   router: ReturnType<typeof useRouter>;
   furiganaLines: ReturnType<typeof useSongData>['furiganaLines'];
-  hasSyncData: boolean;
   pipSupported: boolean;
   onOpenPiP: () => void;
+  onShowSongInfo: () => void;
   canEdit: boolean;
 }) {
   const { t } = useI18n();
   const [showMenu, setShowMenu] = useState(false);
+  const [showDownloadMenu, setShowDownloadMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Close menu on outside tap
   useEffect(() => {
     if (!showMenu) return;
     const handler = (e: TouchEvent | MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setShowMenu(false);
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setShowMenu(false);
+      }
     };
     document.addEventListener('touchstart', handler);
     document.addEventListener('mousedown', handler);
@@ -949,18 +992,24 @@ function MobileMenu({ data, sync, song, id, router, furiganaLines, hasSyncData, 
   }, [showMenu]);
 
   const menuItems = [
+    { icon: <Info className="h-4 w-4" />, label: t('song.info'), onClick: onShowSongInfo },
     { icon: <RefreshCw className={`h-4 w-4 ${data.syncing ? 'animate-spin' : ''}`} />, label: data.syncing ? t('song.syncing') : t('song.sync'), onClick: data.handleSync, disabled: data.syncing || !canEdit },
     ...(song.lyrics_raw && canEdit ? [{ icon: <Clock3 className="h-4 w-4" />, label: t('song.timelineEdit'), onClick: () => router.push(`/songs/${id}/timeline/edit`) }] : []),
     ...(pipSupported && furiganaLines.length > 0 ? [{ icon: <PictureInPicture className="h-4 w-4" />, label: t('song.pipBtn'), onClick: onOpenPiP }] : []),
-    { icon: <Bug className="h-4 w-4" />, label: t('song.debug'), onClick: () => data.setDebug(!data.debug), active: data.debug },
-    { icon: <Download className="h-4 w-4" />, label: '.txt', onClick: () => { window.location.href = `/api/songs/${id}/export?format=text`; } },
-    { icon: <Download className="h-4 w-4" />, label: '.lrc', onClick: () => { window.location.href = `/api/songs/${id}/export?format=lrc`; } },
-    { icon: <Download className="h-4 w-4" />, label: `.html ${t('song.exportFurigana')}`, onClick: () => { window.location.href = `/api/songs/${id}/export?format=html`; } },
+    ...(song.reading_scheme === 'yue-jyutping' ? [] : [{ icon: <Languages className="h-4 w-4" />, label: t('song.romanizeFurigana'), status: t(data.romanizeFurigana ? 'common.on' : 'common.off'), onClick: () => data.setRomanizeFurigana(!data.romanizeFurigana), keepOpen: true }]),
+    { icon: <Bug className="h-4 w-4" />, label: t('song.debug'), status: t(data.debug ? 'common.on' : 'common.off'), onClick: () => data.setDebug(!data.debug), keepOpen: true },
+    { icon: <Download className="h-4 w-4" />, label: t('song.download'), status: <ChevronDown className="h-3.5 w-3.5 -rotate-90" />, onClick: () => setShowDownloadMenu(true), keepOpen: true },
     ...(canEdit ? [
       { icon: <Pencil className="h-4 w-4" />, label: t('common.edit'), onClick: () => router.push(`/songs/${id}/edit`) },
       { icon: <Languages className="h-4 w-4" />, label: t('furigana.title'), onClick: () => router.push(`/songs/${id}/furigana/edit`) },
       { icon: <Trash2 className="h-4 w-4" />, label: t('common.delete'), onClick: data.handleDelete, danger: true },
     ] : []),
+  ];
+
+  const downloadItems = [
+    { label: '.txt', format: 'text' },
+    { label: '.lrc', format: 'lrc' },
+    { label: `.html ${t('song.exportFurigana')}`, format: 'html' },
   ];
 
   return (
@@ -978,17 +1027,10 @@ function MobileMenu({ data, sync, song, id, router, furiganaLines, hasSyncData, 
           {data.copied ? <Check className="h-5 w-5" /> : <Copy className="h-5 w-5" />}
         </MobileIconButton>
 
-        {/* Paste */}
-        {!hasSyncData && canEdit && (
-          <MobileIconButton label={t('song.paste')} onClick={() => data.setShowPasteLrc(!data.showPasteLrc)} className={data.showPasteLrc ? 'song-mobile-button--active' : ''}>
-            <ClipboardPaste className="h-5 w-5" />
-          </MobileIconButton>
-        )}
-
-        {/* Original / Furigana / Romaji */}
+        {/* Original / Furigana */}
         <MobileIconButton
-          label={t(data.readingMode === 'original' ? 'song.readingOriginal' : data.readingMode === 'romaji' ? 'song.readingRomaji' : 'song.readingFurigana')}
-          onClick={() => data.setReadingMode(data.readingMode === 'original' ? 'furigana' : data.readingMode === 'furigana' ? 'romaji' : 'original')}
+          label={t(data.readingMode === 'original' ? 'song.readingOriginal' : 'song.readingFurigana')}
+          onClick={() => data.setReadingMode(data.readingMode === 'original' ? 'furigana' : 'original')}
           className={data.readingMode !== 'furigana' ? 'song-mobile-button--active' : ''}
         >
           <Languages className="h-5 w-5" />
@@ -1004,30 +1046,89 @@ function MobileMenu({ data, sync, song, id, router, furiganaLines, hasSyncData, 
 
         {/* 3-dot menu */}
         <div className="relative" ref={menuRef}>
-          <MobileIconButton label={t('song.more')} onClick={() => setShowMenu(!showMenu)} className={showMenu ? 'song-mobile-button--active' : ''}>
+          <MobileIconButton
+            label={t('song.more')}
+            onClick={() => {
+              if (showMenu) {
+                setShowMenu(false);
+              } else {
+                setShowDownloadMenu(false);
+                setShowMenu(true);
+              }
+            }}
+            className={`song-mobile-menu-trigger ${showMenu ? 'song-mobile-button--active' : ''}`}
+            data-open={showMenu}
+            aria-haspopup="menu"
+            aria-expanded={showMenu}
+          >
             <MoreVertical className="h-5 w-5" />
           </MobileIconButton>
-          {showMenu && (
-            <div className="absolute right-0 bottom-full mb-2 z-50 rounded-xl bg-[var(--card)] border border-[var(--border)] shadow-xl py-1.5 min-w-[180px] fade-in">
-              {menuItems.map((item, i) => (
+          <div
+            role="menu"
+            aria-hidden={!showMenu}
+            data-open={showMenu}
+            className="song-menu-popover song-menu-popover--mobile absolute right-0 bottom-full z-50 mb-2 min-w-[200px] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] py-1.5 shadow-xl"
+          >
+            {showDownloadMenu ? (
+              <div key="download" className="song-menu-page song-menu-page--forward">
                 <button
-                  key={i}
-                  onClick={() => { item.onClick(); if (!('active' in item)) setShowMenu(false); }}
-                  disabled={'disabled' in item ? item.disabled : false}
-                  className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors disabled:opacity-50 ${
-                    'danger' in item && item.danger
-                      ? 'text-[var(--destructive)] hover:bg-[var(--destructive)]/10'
-                      : 'active' in item && item.active
-                        ? 'text-[var(--song-accent)] bg-[var(--song-accent)]/10'
-                        : 'text-[var(--foreground)] hover:bg-[var(--accent)]'
-                  }`}
+                  type="button"
+                  role="menuitem"
+                  data-menu-item
+                  onClick={() => setShowDownloadMenu(false)}
+                  className="song-menu-item flex w-full items-center gap-3 border-b border-[var(--border)] px-4 py-2.5 text-left text-sm font-medium text-[var(--foreground)] hover:bg-[var(--accent)]"
                 >
-                  {item.icon}
-                  <span>{item.label}</span>
+                  <ArrowLeft className="h-4 w-4" />
+                  <span>{t('song.download')}</span>
                 </button>
-              ))}
-            </div>
-          )}
+                {downloadItems.map((item) => (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    data-menu-item
+                    key={item.format}
+                    onClick={() => {
+                      setShowMenu(false);
+                      window.location.href = `/api/songs/${id}/export?format=${item.format}`;
+                    }}
+                    className="song-menu-item flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-[var(--foreground)] hover:bg-[var(--accent)]"
+                  >
+                    <Download className="h-4 w-4" />
+                    <span>{item.label}</span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div key="main" className="song-menu-page song-menu-page--back">
+                {menuItems.map((item, i) => (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    data-menu-item
+                    key={i}
+                    onClick={() => {
+                      item.onClick();
+                      if (!('keepOpen' in item && item.keepOpen)) {
+                        setShowMenu(false);
+                      }
+                    }}
+                    disabled={'disabled' in item ? item.disabled : false}
+                    className={`song-menu-item flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm disabled:opacity-50 ${
+                      'danger' in item && item.danger
+                        ? 'text-[var(--destructive)] hover:bg-[var(--destructive)]/10'
+                        : 'text-[var(--foreground)] hover:bg-[var(--accent)]'
+                    }`}
+                  >
+                    {item.icon}
+                    <span className="min-w-0 flex-1">{item.label}</span>
+                    {'status' in item && item.status && (
+                      <span className="ml-auto text-[11px] text-[var(--muted-foreground)]">{item.status}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>

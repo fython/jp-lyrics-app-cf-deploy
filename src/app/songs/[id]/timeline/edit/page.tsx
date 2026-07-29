@@ -106,17 +106,22 @@ export default function TimelineEditorPage() {
 
   useEffect(() => {
     if (!nowPlaying) return;
-    progressAnchor.current = {
+    const nextAnchor = {
       progressMs: nowPlaying.progress_ms || 0,
       receivedAt: Date.now(),
       playing: !!nowPlaying.is_playing,
     };
+    progressAnchor.current = nextAnchor;
+    const frame = window.requestAnimationFrame(() => {
+      setLiveProgress(getAccurateProgress(nextAnchor));
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, [nowPlaying]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
       setLiveProgress(getAccurateProgress(progressAnchor.current));
-    }, 200);
+    }, 100);
     return () => window.clearInterval(timer);
   }, []);
 
@@ -351,16 +356,22 @@ export default function TimelineEditorPage() {
         </div>
 
         <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-4">
-          <div className="flex items-end justify-between gap-3">
-            <div><div className="text-xs text-[var(--muted-foreground)]">{t('timelineWorkspace.progress')}</div><div className="mt-1 text-2xl font-semibold tabular-nums">{markedCount}<span className="text-sm font-normal text-[var(--muted-foreground)]"> / {lines.length}</span></div></div>
-            <div className="text-sm font-medium text-[var(--song-accent)]">{progressPercent}%</div>
+          <div className="text-xs font-medium text-[var(--muted-foreground)]">{t('timeline.offset')}</div>
+          <div className="mt-3 grid grid-cols-4 gap-1.5">
+            {[-500, -100, 100, 500].map((offset) => (
+              <button key={offset} type="button" onClick={() => applyOffset(offset)} className="song-accent-button inline-flex h-8 min-w-0 items-center justify-center rounded-md px-1 text-[10px] tabular-nums">
+                {offset > 0 ? <Plus className="mr-0.5 h-3 w-3 shrink-0" /> : <Minus className="mr-0.5 h-3 w-3 shrink-0" />}{Math.abs(offset)}ms
+              </button>
+            ))}
           </div>
-          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[var(--muted)]"><div className="h-full rounded-full bg-[var(--song-accent)]" style={{ width: `${progressPercent}%` }} /></div>
-          <p className="mt-3 text-[11px] leading-relaxed text-[var(--muted-foreground)]">{t('timelineWorkspace.autoAdvanceHint')}</p>
+          <div className="mt-2 flex min-w-0 items-center gap-1">
+            <input type="number" step="10" value={offsetDraft} onChange={(event) => setOffsetDraft(event.target.value)} className="h-8 min-w-0 flex-1 rounded-md border border-[var(--border)] bg-[var(--input)] px-2 text-xs tabular-nums outline-none focus:border-[var(--song-accent)]" aria-label={t('timeline.customOffset')} />
+            <button type="button" onClick={() => applyOffset(Number(offsetDraft))} className="song-accent-button h-8 shrink-0 rounded-md px-3 text-xs">{t('timeline.apply')}</button>
+          </div>
         </div>
       </section>
 
-      <section className="mb-4 rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 sm:p-5">
+      <section className="sticky top-14 z-40 mb-4 rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 sm:p-5">
         <div className="grid items-center gap-4 md:grid-cols-[40px_minmax(0,1fr)_40px]">
           <button type="button" onClick={() => selectLine(currentIndex - 1)} disabled={currentIndex === 0} className="hidden h-10 w-10 items-center justify-center rounded-md text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-30 md:flex" aria-label={t('timelineWorkspace.previousLine')}><ChevronUp className="h-5 w-5" /></button>
           <div className="min-w-0 text-center">
@@ -374,21 +385,8 @@ export default function TimelineEditorPage() {
           <LocateFixed className="h-5 w-5" />
           {canUseSpotifyTime ? t('timelineWorkspace.markAt', { time: fmtMs(liveProgress) }) : t('timelineWorkspace.waitingSpotify')}
         </button>
-        <div className="mt-3 flex items-center justify-center gap-4 text-[10px] text-[var(--muted-foreground)]">
+        <div className="mt-3 hidden items-center justify-center gap-4 text-[10px] text-[var(--muted-foreground)] sm:flex">
           <span>{t('timelineWorkspace.shortcutMark')}</span><span>{t('timelineWorkspace.shortcutNavigate')}</span><span>{t('timelineWorkspace.shortcutSave')}</span>
-        </div>
-      </section>
-
-      <section className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--card)] p-3">
-        <span className="mr-1 text-xs font-medium text-[var(--muted-foreground)]">{t('timeline.offset')}</span>
-        {[-500, -100, 100, 500].map((offset) => (
-          <button key={offset} type="button" onClick={() => applyOffset(offset)} className="song-accent-button inline-flex h-8 items-center rounded-md px-2.5 text-[11px] tabular-nums">
-            {offset > 0 ? <Plus className="mr-1 h-3 w-3" /> : <Minus className="mr-1 h-3 w-3" />}{Math.abs(offset)}ms
-          </button>
-        ))}
-        <div className="ml-auto flex items-center gap-1">
-          <input type="number" step="10" value={offsetDraft} onChange={(event) => setOffsetDraft(event.target.value)} className="h-8 w-24 rounded-md border border-[var(--border)] bg-[var(--input)] px-2 text-xs tabular-nums outline-none focus:border-[var(--song-accent)]" aria-label={t('timeline.customOffset')} />
-          <button type="button" onClick={() => applyOffset(Number(offsetDraft))} className="song-accent-button h-8 rounded-md px-3 text-xs">{t('timeline.apply')}</button>
         </div>
       </section>
 
@@ -401,7 +399,7 @@ export default function TimelineEditorPage() {
           {lines.map((line, index) => {
             const selected = index === currentIndex;
             return (
-              <div key={`${index}-${line.text}`} ref={(element) => { rowRefs.current[index] = element; }} onClick={() => selectLine(index)} className={`mb-1 grid cursor-pointer grid-cols-[28px_minmax(0,1fr)] items-center gap-2 rounded-lg border px-2 py-2 transition-colors sm:grid-cols-[32px_112px_minmax(0,1fr)_72px] sm:gap-3 sm:px-3 ${selected ? 'border-[var(--song-accent)] bg-[var(--song-accent)]/8' : 'border-transparent hover:bg-[var(--accent)]'}`}>
+              <div key={`${index}-${line.text}`} ref={(element) => { rowRefs.current[index] = element; }} onClick={() => selectLine(index)} className={`mb-1 grid cursor-pointer grid-cols-[28px_minmax(0,1fr)_72px] items-center gap-2 rounded-lg border px-2 py-2 transition-colors sm:grid-cols-[32px_112px_minmax(0,1fr)_72px] sm:gap-3 sm:px-3 ${selected ? 'border-[var(--song-accent)] bg-[var(--song-accent)]/8' : 'border-transparent hover:bg-[var(--accent)]'}`}>
                 <div className="flex justify-center">{line.timeMs == null ? <Circle className="h-4 w-4 text-[var(--muted-foreground)]/50" /> : <CheckCircle2 className="h-4 w-4 text-[var(--success)]" />}</div>
                 <div className="hidden sm:block">
                   <input key={`${index}-${line.timeMs ?? 'empty'}`} defaultValue={line.timeMs == null ? '' : fmtMs(line.timeMs)} placeholder="--:--.---" onClick={(event) => event.stopPropagation()} onBlur={(event) => {
@@ -432,8 +430,12 @@ export default function TimelineEditorPage() {
       </section>
 
       <div className="sticky bottom-3 mt-4 flex items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--background)]/95 p-3 shadow-lg backdrop-blur">
-        <div className="min-w-0 text-xs text-[var(--muted-foreground)]">
-          {dirty ? t('timelineWorkspace.unsavedStatus') : t('timelineWorkspace.savedStatus')}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline justify-between gap-2 text-xs">
+            <div className="truncate text-[var(--muted-foreground)]">{t('timelineWorkspace.progress')} <span className="ml-1 font-semibold text-[var(--foreground)] tabular-nums">{markedCount} / {lines.length}</span></div>
+            <div className="shrink-0 font-medium text-[var(--song-accent)]">{progressPercent}%</div>
+          </div>
+          <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-[var(--muted)]"><div className="h-full rounded-full bg-[var(--song-accent)]" style={{ width: `${progressPercent}%` }} /></div>
         </div>
         <button type="button" onClick={save} disabled={saving || !dirty} className="song-editor-primary-button inline-flex h-9 shrink-0 items-center gap-2 rounded-md px-4 text-xs font-medium disabled:opacity-40">
           {saving ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" /> : dirty ? <Save className="h-4 w-4" /> : <Check className="h-4 w-4" />}

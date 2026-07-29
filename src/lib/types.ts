@@ -4,6 +4,8 @@ export interface Song {
   artist: string;
   lyrics_raw: string;
   lyrics_furigana: string;
+  reading_scheme: ReadingScheme;
+  reading_scheme_confirmed: number;
   lyrics_synced: string;
   cover_url?: string | null;
   spotify_track_id?: string | null;
@@ -32,7 +34,8 @@ export interface FuriganaLine {
   segments: FuriganaSegment[];
 }
 
-export type ReadingMode = 'original' | 'furigana' | 'romaji';
+export type ReadingMode = 'original' | 'furigana';
+export type ReadingScheme = 'ja-kana' | 'yue-jyutping';
 
 export interface SongListItem {
   id: string;
