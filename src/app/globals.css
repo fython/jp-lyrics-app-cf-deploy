@@ -63,6 +63,10 @@ body {
   line-height: 1.6;
   transition: background-color 240ms ease;
 }
+/* Match the document background transition so the sticky top bar does not jump ahead of page content. */
+.app-topbar {
+  transition: background-color 240ms ease, border-color 240ms ease;
+}
 /* Applied only while a song detail has a successfully extracted cover color. */
 body.song-page-themed {
   background: color-mix(in srgb, var(--background) 96%, var(--song-page-accent));
@@ -134,18 +138,18 @@ textarea {
   animation: themeSunSpin 620ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 .theme-toggle-icon--moon {
-  animation: themeMoonSway 400ms ease-in-out;
+  animation: themeMoonSway 480ms cubic-bezier(0.34, 1.45, 0.64, 1);
 }
 @keyframes themeSunSpin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }
 @keyframes themeMoonSway {
-  0% { transform: rotate(0deg); }
-  25% { transform: rotate(23deg); }
-  50% { transform: rotate(0deg); }
-  75% { transform: rotate(-23deg); }
-  100% { transform: rotate(0deg); }
+  0% { transform: rotate(0deg) translateX(0); }
+  30% { transform: rotate(16deg) translateX(1px); }
+  56% { transform: rotate(-8deg) translateX(-0.5px); }
+  76% { transform: rotate(3deg) translateX(0); }
+  100% { transform: rotate(0deg) translateX(0); }
 }
 
 /* The home search edge eases in and out, with only a trace of the primary glow at focus. */
@@ -171,6 +175,7 @@ textarea {
 @media (prefers-reduced-motion: reduce) {
   .theme-toggle-button,
   .theme-toggle-icon,
+  .app-topbar,
   .home-search-field,
   .home-search-icon {
     animation: none !important;
@@ -197,6 +202,20 @@ textarea {
   padding-bottom: 1.25rem;
 }
 .now-playing-reveal { min-height: 0; overflow: hidden; }
+.now-playing-metadata {
+  flex: 1;
+  min-width: 0;
+}
+.now-playing-metadata--out { animation: nowPlayingMetadataOut 140ms ease-in forwards; }
+.now-playing-metadata--in { animation: nowPlayingMetadataIn 180ms ease-out both; }
+@keyframes nowPlayingMetadataOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@keyframes nowPlayingMetadataIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
 .now-playing-card {
   opacity: 0;
   transform: translateY(-8px) scale(0.985);
@@ -290,8 +309,8 @@ textarea {
   .now-playing-slot--visible { padding-bottom: 1.5rem; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .now-playing-slot, .now-playing-card, .now-playing-card::before, .now-playing-card::after { transition: none; }
-  .now-playing-card, .now-playing-card::before, .now-playing-card::after { animation: none !important; }
+  .now-playing-slot, .now-playing-card, .now-playing-metadata, .now-playing-card::before, .now-playing-card::after { transition: none; }
+  .now-playing-card, .now-playing-metadata, .now-playing-card::before, .now-playing-card::after { animation: none !important; }
   .now-playing-card:hover::before,
   .now-playing-card[data-touching="true"]::before { opacity: 0.42; }
   .now-playing-card:hover::after,
