@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { getDB, schema, sql } from '@/lib/db';
 import { parseLrc } from '@/lib/lrc';
 import { getAuthUser } from '@/lib/auth';
+import { getSpotifyTrack } from '@/lib/spotify';
 import type { SongListItem } from '@/lib/types';
 
 /** Look up Spotify display name from spotify_auth table */
@@ -87,7 +88,14 @@ export async function POST(request: NextRequest) {
 
   const db = getDB();
   const body = await request.json();
-  const { title, artist, lyrics_raw, lyrics_synced, reading_scheme } = body;
+  const {
+    title,
+    artist,
+    lyrics_raw,
+    lyrics_synced,
+    reading_scheme,
+    spotify_track_id,
+  } = body;
 
   if (!title) {
     return NextResponse.json({ error: 'title_required' }, { status: 400 });
@@ -97,6 +105,12 @@ export async function POST(request: NextRequest) {
   }
 
   const id = uuidv4();
+  const requestedSpotifyTrackId = typeof spotify_track_id === 'string'
+    ? spotify_track_id.trim()
+    : '';
+  const spotifyTrack = requestedSpotifyTrackId
+    ? await getSpotifyTrack(user.email, requestedSpotifyTrackId)
+    : null;
 
   // If LRC synced lyrics provided, strip timestamps to get raw text
   let rawLyrics = lyrics_raw || '';
@@ -118,6 +132,13 @@ export async function POST(request: NextRequest) {
     readingScheme: reading_scheme ?? 'ja-kana',
     readingSchemeConfirmed: reading_scheme ? 1 : 0,
     lyricsSynced: syncedLyrics,
+    coverUrl: spotifyTrack?.coverUrl ?? null,
+    spotifyTrackId: spotifyTrack?.id ?? null,
+    spotifyUri: spotifyTrack?.uri ?? null,
+    spotifyAlbum: spotifyTrack?.album ?? null,
+    spotifyDurationMs: spotifyTrack?.durationMs ?? null,
+    spotifyCanonicalTitle: spotifyTrack?.title ?? null,
+    spotifyCanonicalArtist: spotifyTrack?.artist ?? null,
     createdBy,
     createdByName,
   });

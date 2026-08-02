@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { useTransitionRouter } from 'next-view-transitions';
 import Link from 'next/link';
@@ -18,6 +18,7 @@ import { useSpotifySync } from '@/hooks/useSpotifySync';
 import type { CoverColor } from '@/lib/cover-color';
 import { useCoverTheme } from '@/hooks/useCoverPalette';
 import { getCachedSongCover, cacheSongCover } from '@/lib/song-cover-cache';
+import { getCachedSong } from '@/lib/song-list-cache';
 import type { FuriganaLine } from '@/lib/types';
 import { useAuthSession } from '@/lib/auth-session';
 import type { SyncRefs } from '@/hooks/useSpotifySync';
@@ -102,6 +103,7 @@ export default function SongViewPage() {
   const params = useParams();
   const { t } = useI18n();
   const id = params?.id as string;
+  const cachedSong = useMemo(() => getCachedSong(id), [id]);
 
   // Data + handlers hook
   const data = useSongData(id);
@@ -204,8 +206,17 @@ export default function SongViewPage() {
             <div className="flex items-start gap-3 sm:gap-4 min-w-0 flex-1">
               <CoverImage src={coverUrl} alt="" size="md" viewTransitionName={`song-cover-${id}`} />
               <div className="space-y-0.5 sm:space-y-1 min-w-0 flex-1 py-0.5">
-                <div className="h-6 w-48 bg-[var(--muted)] rounded animate-pulse cover-transition" style={{ ['--vt-name' as string]: `song-title-${id}` }} />
-                <div className="h-4 w-32 bg-[var(--muted)] rounded animate-pulse cover-transition" style={{ ['--vt-name' as string]: `song-artist-${id}` }} />
+                {cachedSong ? (
+                  <>
+                    <div className="text-lg sm:text-xl font-semibold tracking-tight truncate">{cachedSong.title}</div>
+                    <div className="text-sm text-[var(--muted-foreground)] truncate">{cachedSong.artist || t('common.unknownArtist')}</div>
+                  </>
+                ) : (
+                  <>
+                    <div className="h-6 w-48 bg-[var(--muted)] rounded animate-pulse" />
+                    <div className="h-4 w-32 bg-[var(--muted)] rounded animate-pulse" />
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -344,8 +355,8 @@ export default function SongViewPage() {
           <div className="flex items-start gap-3 sm:gap-4 min-w-0 w-full">
             <CoverImage src={coverUrl} alt={song.title} size="md" viewTransitionName={`song-cover-${id}`} />
             <div className="flex-1 w-fit max-w-full min-w-0 space-y-0.5 sm:space-y-1">
-              <h1 className="text-base sm:text-xl font-semibold tracking-tight break-words cover-transition" style={{ ['--vt-name' as string]: `song-title-${id}` }}>{song.title}</h1>
-              {song.artist && <p className="text-xs sm:text-sm text-[var(--muted-foreground)] cover-transition" style={{ ['--vt-name' as string]: `song-artist-${id}` }}>{song.artist}</p>}
+              <h1 className="text-base sm:text-xl font-semibold tracking-tight break-words">{song.title}</h1>
+              {song.artist && <p className="text-xs sm:text-sm text-[var(--muted-foreground)]">{song.artist}</p>}
               {/* Visibility badge + request public */}
               <div className="flex items-center gap-2 mt-1">
               {song.is_public === 1 ? (
@@ -819,7 +830,20 @@ export default function SongViewPage() {
       )}
 
       <ConfirmDialog open={data.deleteConfirm} title={t('dialog.deleteConfirmTitle', { title: song?.title || '' })} body={t('dialog.deleteConfirmBody')} confirmLabel={t('common.delete')} cancelLabel={t('common.cancel')} variant="danger" onConfirm={data.confirmDelete} onCancel={() => data.setDeleteConfirm(false)} />
-      <ConfirmDialog open={!!data.importAlert} title={t('dialog.importErrorTitle')} body={data.importAlert || undefined} confirmLabel={t('common.confirm')} alert onConfirm={() => data.setImportAlert(null)} />
+      <ConfirmDialog
+        open={!!data.importAlert}
+        title={t('dialog.importErrorTitle')}
+        body={data.importAlert?.message}
+        confirmLabel={data.importAlert?.manualCreateUrl ? t('home.createManually') : t('common.confirm')}
+        cancelLabel={data.importAlert?.manualCreateUrl ? t('common.cancel') : undefined}
+        alert={!data.importAlert?.manualCreateUrl}
+        onConfirm={() => {
+          const url = data.importAlert?.manualCreateUrl;
+          data.setImportAlert(null);
+          if (url) router.push(url);
+        }}
+        onCancel={() => data.setImportAlert(null)}
+      />
     </div>
   );
 }

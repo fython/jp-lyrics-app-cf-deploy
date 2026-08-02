@@ -3,7 +3,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTransitionRouter } from 'next-view-transitions';
-import { Music, Plus, Unlink, Download, ExternalLink, Loader2, Search, X, User, Star, FolderPlus, Trash } from 'lucide-react';
+import { Music, Plus, Unlink, Download, ExternalLink, Loader2, Search, X, User, Star, FolderPlus, Trash, LayoutGrid, List } from 'lucide-react';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import SongItemCard from '@/components/SongItemCard';
 import Toast from '@/components/Toast';
@@ -13,6 +13,8 @@ import { findBestMatch, isSongPlaying } from '@/lib/match';
 import { useNowPlaying } from '@/hooks/useNowPlaying';
 import { useAuthSession } from '@/lib/auth-session';
 import { cacheSongCovers } from '@/lib/song-cover-cache';
+import { buildManualCreateUrl } from '@/lib/song-prefill';
+import { getCachedSongs, setCachedSongs } from '@/lib/song-list-cache';
 
 interface SongItem {
   id: string;
@@ -28,6 +30,7 @@ interface SongItem {
 }
 
 type ToastState = { type: 'success' | 'error'; msg: string } | null;
+type ImportAlertState = { message: string; manualCreateUrl?: string } | null;
 const EMPTY_SONG_IDS = new Set<string>();
 
 function localeToBCP47(locale: string): string {
@@ -51,33 +54,22 @@ function importErrorMsg(t: (k: string) => string, error?: string, fallbackKey?: 
   return key ? t(key) : t(fallbackKey || 'home.importFailed');
 }
 
-const SONGS_CACHE_KEY = 'jplrc:songs:list';
-const SONGS_CACHE_TTL = 5 * 60 * 1000;
+const SONG_VIEW_MODE_KEY = 'jplrc:songs:view-mode';
+type SongViewMode = 'list' | 'grid';
 
-function getCachedSongs(): SongItem[] | null {
-  if (typeof sessionStorage === 'undefined') return null;
+function getSongViewMode(): SongViewMode {
+  if (typeof localStorage === 'undefined') return 'list';
   try {
-    const raw = sessionStorage.getItem(SONGS_CACHE_KEY);
-    if (!raw) return null;
-    const { data, timestamp } = JSON.parse(raw);
-    if (Date.now() - timestamp > SONGS_CACHE_TTL) return null;
-    return data;
+    return localStorage.getItem(SONG_VIEW_MODE_KEY) === 'grid' ? 'grid' : 'list';
   } catch {
-    return null;
+    return 'list';
   }
-}
-
-function setCachedSongs(data: SongItem[]) {
-  if (typeof sessionStorage === 'undefined') return;
-  try {
-    sessionStorage.setItem(SONGS_CACHE_KEY, JSON.stringify({ data, timestamp: Date.now() }));
-  } catch {}
 }
 
 export default function HomePage() {
   const { t, locale } = useI18n();
   const searchParams = useSearchParams();
-  const [initialSongs] = useState(getCachedSongs);
+  const [initialSongs] = useState(() => getCachedSongs<SongItem>());
   const [songs, setSongs] = useState<SongItem[]>(() => initialSongs ?? []);
   const [loading, setLoading] = useState(() => initialSongs === null);
   const { session, updateSession } = useAuthSession();
@@ -103,8 +95,9 @@ export default function HomePage() {
     return success === 'connected' ? { type: 'success', msg: t('home.spotifyConnected') } : null;
   });
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
-  const [importAlert, setImportAlert] = useState<string | null>(null);
+  const [importAlert, setImportAlert] = useState<ImportAlertState>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [songViewMode, setSongViewMode] = useState<SongViewMode>(getSongViewMode);
   const [mySongsOnly, setMySongsOnly] = useState(false);
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [showPlaylistImport, setShowPlaylistImport] = useState(false);
@@ -231,7 +224,10 @@ export default function HomePage() {
       });
       const data = await res.json();
       if (!res.ok || data.error) {
-        setImportAlert(importErrorMsg(t, data.error, 'home.importErrorDefault'));
+        setImportAlert({
+          message: importErrorMsg(t, data.error, 'home.importErrorDefault'),
+          manualCreateUrl: buildManualCreateUrl(data),
+        });
         return;
       }
       router.push(`/songs/${data.id}`);
@@ -254,7 +250,7 @@ export default function HomePage() {
       });
       const data = await res.json();
       if (!res.ok || data.error) {
-        setImportAlert(importErrorMsg(t, data.error, 'home.playlistImportError'));
+        setImportAlert({ message: importErrorMsg(t, data.error, 'home.playlistImportError') });
         return;
       }
       setPlaylistResult(data);
@@ -367,7 +363,14 @@ export default function HomePage() {
     });
 
     previousSongRectsRef.current = currentRects;
-  }, [visibleSongIds]);
+  }, [songViewMode, visibleSongIds]);
+
+  const changeSongViewMode = (mode: SongViewMode) => {
+    setSongViewMode(mode);
+    try {
+      localStorage.setItem(SONG_VIEW_MODE_KEY, mode);
+    } catch {}
+  };
 
   return (
     <div className="fade-in">
@@ -494,6 +497,28 @@ export default function HomePage() {
             </button>
           </div>
         )}
+        <div className="inline-flex self-start sm:self-auto rounded-md border border-[var(--border)] bg-[var(--accent)] p-0.5 shrink-0" role="group" aria-label={t('home.viewMode')}>
+          <button
+            type="button"
+            onClick={() => changeSongViewMode('list')}
+            className={`rounded p-1.5 transition-colors ${songViewMode === 'list' ? 'bg-[var(--card)] text-[var(--foreground)] shadow-sm' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]'}`}
+            title={t('home.listView')}
+            aria-label={t('home.listView')}
+            aria-pressed={songViewMode === 'list'}
+          >
+            <List className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => changeSongViewMode('grid')}
+            className={`rounded p-1.5 transition-colors ${songViewMode === 'grid' ? 'bg-[var(--card)] text-[var(--foreground)] shadow-sm' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]'}`}
+            title={t('home.gridView')}
+            aria-label={t('home.gridView')}
+            aria-pressed={songViewMode === 'grid'}
+          >
+            <LayoutGrid className="h-3.5 w-3.5" />
+          </button>
+        </div>
       </div>
 
       {/* Collections */}
@@ -630,13 +655,14 @@ export default function HomePage() {
           <p className="text-sm text-[var(--muted-foreground)]">{t('home.noResults')}</p>
         </div>
       ) : (
-        <div ref={songListRef} className="space-y-1.5 sm:space-y-2">
+        <div ref={songListRef} className={songViewMode === 'grid' ? 'song-grid grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4' : 'space-y-1.5 sm:space-y-2'}>
           {filteredSongs.map((song) => {
             const isPlaying = nowPlaying?.is_playing && isSongPlaying(song, nowPlaying.track, currentUser?.email);
             return (
               <SongItemCard
                 key={song.id}
                 song={song}
+                variant={songViewMode}
                 isPlaying={isPlaying}
                 spotifyConnected={!!spotify?.connected}
                 isFavorite={visibleFavorites.has(song.id)}
@@ -675,10 +701,16 @@ export default function HomePage() {
       <ConfirmDialog
         open={!!importAlert}
         title={t('home.importErrorTitle')}
-        body={importAlert || undefined}
-        confirmLabel={t('common.confirm')}
-        alert
-        onConfirm={() => setImportAlert(null)}
+        body={importAlert?.message}
+        confirmLabel={importAlert?.manualCreateUrl ? t('home.createManually') : t('common.confirm')}
+        cancelLabel={importAlert?.manualCreateUrl ? t('common.cancel') : undefined}
+        alert={!importAlert?.manualCreateUrl}
+        onConfirm={() => {
+          const url = importAlert?.manualCreateUrl;
+          setImportAlert(null);
+          if (url) router.push(url);
+        }}
+        onCancel={() => setImportAlert(null)}
       />
     </div>
   );
