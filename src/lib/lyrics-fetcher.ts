@@ -1,3 +1,7 @@
+import * as heModule from 'he';
+
+const decodeHtmlEntity = (heModule as unknown as { default?: typeof heModule }).default?.decode ?? heModule.decode;
+
 /**
  * Shared lyrics fetcher — multi-source chain used by sync and import-playlist.
  *
@@ -14,11 +18,27 @@ export interface LyricsResult {
   plain: string;
 }
 
+/** Decode named and numeric HTML entities returned by third-party lyrics providers. */
+export function unescapeLyrics(value: string): string {
+  return decodeHtmlEntity(value);
+}
+
+function unescapeLyricsResult(result: LyricsResult): LyricsResult {
+  return {
+    synced: unescapeLyrics(result.synced),
+    plain: unescapeLyrics(result.plain),
+  };
+}
+
 export interface LyricsFetchResult {
   result: LyricsResult | null;
   source: string;
   /** Heuristic 0–100 confidence based on source and match strategy. */
   confidence: number;
+}
+
+function fetchedResult(result: LyricsResult, source: string, confidence: number): LyricsFetchResult {
+  return { result: unescapeLyricsResult(result), source, confidence };
 }
 
 function stripTimestamps(lrc: string): string {
@@ -74,11 +94,90 @@ export async function searchLrclib(query: string): Promise<LyricsResult | null> 
 
 // ─── PetitLyrics ──
 
+export function decodeBase64Bytes(encoded: string): Uint8Array {
+  const binary = atob(encoded.trim());
+  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+}
+
 /** PetitLyrics wraps UTF-8 lyric bytes in Base64; atob alone only returns a binary string. */
 export function decodeBase64Utf8(encoded: string): string {
-  const binary = atob(encoded.trim());
-  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-  return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  return new TextDecoder('utf-8', { fatal: true }).decode(decodeBase64Bytes(encoded));
+}
+
+interface PetitLyricsCandidate {
+  type: number;
+  data: string | Uint8Array;
+  title: string;
+  artist: string;
+}
+
+const PETITLYRICS_SYNC_CANDIDATE_LIMIT = 4;
+
+function normalizePetitLyricsMetadata(value: string): string {
+  return value.normalize('NFKC').toLocaleLowerCase('ja-JP').replace(/[\s\p{P}\p{S}]+/gu, '');
+}
+
+function isPetitLyricsMatch(candidate: PetitLyricsCandidate, title: string, artist: string): boolean {
+  const candidateTitle = normalizePetitLyricsMetadata(candidate.title);
+  const requestedTitle = normalizePetitLyricsMetadata(title);
+  const candidateArtist = normalizePetitLyricsMetadata(candidate.artist);
+  const requestedArtist = normalizePetitLyricsMetadata(artist);
+  return candidateTitle === requestedTitle
+    && (!requestedArtist || candidateArtist === requestedArtist || candidateArtist.includes(requestedArtist) || requestedArtist.includes(candidateArtist));
+}
+
+export function parsePetitLyricsResponse(xml: string, requestedType: number): PetitLyricsCandidate | null {
+  const dataMatch = xml.match(/<lyricsData>([\s\S]*?)<\/lyricsData>/);
+  if (!dataMatch?.[1]) return null;
+  const typeMatch = xml.match(/<lyricsType>(\d+)<\/lyricsType>/);
+  const lyricsType = typeMatch ? parseInt(typeMatch[1], 10) : requestedType;
+  const titleMatch = xml.match(/<title>([\s\S]*?)<\/title>/);
+  const artistMatch = xml.match(/<artist>([\s\S]*?)<\/artist>/);
+  try {
+    return {
+      type: lyricsType,
+      data: lyricsType === 2 ? decodeBase64Bytes(dataMatch[1]) : decodeBase64Utf8(dataMatch[1]),
+      title: unescapeLyrics(titleMatch?.[1] ?? ''),
+      artist: unescapeLyrics(artistMatch?.[1] ?? ''),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function decodePetitLyricsLsyToLrc(payload: Uint8Array, plainLyrics: string): string | null {
+  const timeArrayOffset = 0xcc;
+  if (payload.length < timeArrayOffset || !plainLyrics) return null;
+
+  const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+  const lineCount = view.getUint32(0x38, true);
+  if (lineCount === 0 || lineCount > 2_000 || payload.length < timeArrayOffset + lineCount * 2) return null;
+
+  let key = view.getUint16(0x1a, true);
+  if (view.getUint8(0x19) === 1) {
+    key = (key & 0x0003)
+      | ((key & 0x000c) << 2)
+      | ((key & 0x0030) >> 2)
+      | ((key & 0x00c0) << 2)
+      | ((key & 0x0300) >> 2)
+      | ((key & 0x0c00) << 2)
+      | ((key & 0x3000) >> 2)
+      | (key & 0xc000);
+  }
+
+  const lyricLines = plainLyrics.replace(/\r\n?/g, '\n').split('\n');
+  while (lyricLines.length > lineCount && lyricLines.at(-1) === '') lyricLines.pop();
+  if (lyricLines.length !== lineCount) return null;
+
+  let previousTimeCs = -1;
+  const lrcLines = lyricLines.map((line, index) => {
+    let timeCs = view.getUint16(timeArrayOffset + index * 2, true) ^ key;
+    while (timeCs < previousTimeCs) timeCs += 0x1_0000;
+    previousTimeCs = timeCs;
+    return `[${msToLrcTime(timeCs * 10)}]${line}`;
+  });
+  while (lrcLines.length > 0 && lyricLines[lrcLines.length - 1] === '') lrcLines.pop();
+  return lrcLines.join('\n');
 }
 
 async function fetchFromPetitLyrics(title: string, artist: string): Promise<LyricsResult | null> {
@@ -88,7 +187,7 @@ async function fetchFromPetitLyrics(title: string, artist: string): Promise<Lyri
     'User-Agent': 'Dalvik/2.1.0 (Linux; U; Android 14; Pixel 8 Build/AP1A.240305.019.A1)',
   };
 
-  async function fetchType(lyricsType: number): Promise<{ type: number; data: string } | null> {
+  async function fetchType(lyricsType: number, index: number): Promise<PetitLyricsCandidate | null> {
     const body = new URLSearchParams({
       clientAppId: 'p1110417',
       lyricsType: String(lyricsType),
@@ -97,37 +196,46 @@ async function fetchFromPetitLyrics(title: string, artist: string): Promise<Lyri
       key_title: title,
       key_album: '',
       maxcount: '1',
-      index: '0',
+      index: String(index),
       logFlag: '0',
     });
     try {
-      const res = await fetchWithTimeout(url, { method: 'POST', headers, body });
+      const res = await fetchWithTimeout(url, { method: 'POST', headers, body }, 8_000);
       if (!res.ok) return null;
-      const xml = await res.text();
-      const dataMatch = xml.match(/<lyricsData>([\s\S]*?)<\/lyricsData>/);
-      const typeMatch = xml.match(/<lyricsType>(\d+)<\/lyricsType>/);
-      if (!dataMatch?.[1]) return null;
-      const decoded = decodeBase64Utf8(dataMatch[1]);
-      return { type: typeMatch ? parseInt(typeMatch[1]) : lyricsType, data: decoded };
+      return parsePetitLyricsResponse(await res.text(), lyricsType);
     } catch { return null; }
   }
 
-  const synced = await fetchType(3);
-  if (synced) {
-    if (synced.type === 3) {
-      const lrc = xmlToLrc(synced.data);
+  // The API only returns one result per request, even when maxcount is higher. Search a small
+  // set of indexed WYSIWYG/LSY candidates first, otherwise a plain-text first result drops timing.
+  for (let index = 0; index < PETITLYRICS_SYNC_CANDIDATE_LIMIT; index += 1) {
+    const synced = await fetchType(3, index);
+    if (!synced) break;
+    if (!isPetitLyricsMatch(synced, title, artist)) continue;
+
+    if (synced.type === 3 && typeof synced.data === 'string') {
+      const lrc = petitLyricsXmlToLrc(synced.data);
       if (lrc) return { synced: lrc, plain: stripTimestamps(lrc) };
-    } else if (synced.type === 1) {
-      return { synced: '', plain: synced.data.trim() };
+    }
+
+    if (synced.type === 2 && synced.data instanceof Uint8Array) {
+      const plain = await fetchType(1, index);
+      if (plain?.type === 1 && typeof plain.data === 'string' && isPetitLyricsMatch(plain, title, artist)) {
+        const lrc = decodePetitLyricsLsyToLrc(synced.data, plain.data);
+        if (lrc) return { synced: lrc, plain: plain.data.trim() };
+      }
     }
   }
 
-  const plain = await fetchType(1);
-  if (plain?.data?.trim()) return { synced: '', plain: plain.data.trim() };
+  // Keep PetitLyrics as a useful plain-text fallback only after all checked sync candidates fail.
+  const plain = await fetchType(1, 0);
+  if (plain?.data && typeof plain.data === 'string' && isPetitLyricsMatch(plain, title, artist)) {
+    return { synced: '', plain: plain.data.trim() };
+  }
   return null;
 }
 
-function xmlToLrc(xml: string): string | null {
+export function petitLyricsXmlToLrc(xml: string): string | null {
   const lines: string[] = [];
   const lineMatches = xml.matchAll(/<line>([\s\S]*?)<\/line>/g);
   for (const m of lineMatches) {
@@ -168,14 +276,10 @@ async function fetchFromUtaNet(title: string, artist: string): Promise<LyricsRes
     const html = await res.text();
     const kashiMatch = html.match(/<div[^>]*id="kashi_area"[^>]*>([\s\S]*?)<\/div>/i);
     if (!kashiMatch) return null;
-    const lyrics = kashiMatch[1]
+    const lyrics = unescapeLyrics(kashiMatch[1]
       .replace(/<br\s*\/?>/gi, '\n')
       .replace(/<[^>]+>/g, '')
-      .replace(/\u3000/g, ' ')
-      .replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&#\d+;/g, '')
+      .replace(/\u3000/g, ' '))
       .trim();
     if (!lyrics) return null;
     return { synced: '', plain: lyrics };
@@ -218,33 +322,33 @@ export async function fetchLyrics(
 ): Promise<LyricsFetchResult> {
   // 1. LRCLIB exact
   let result = await fetchFromLrclib(title, artist);
-  if (result) return { result, source: 'lrclib', confidence: 98 };
+  if (result) return fetchedResult(result, 'lrclib', 98);
 
   // 2. LRCLIB with Spotify canonical name
   if (opts?.spotifyCanonical) {
     result = await fetchFromLrclib(opts.spotifyCanonical.name, opts.spotifyCanonical.artist);
-    if (result) return { result, source: 'lrclib', confidence: 96 };
+    if (result) return fetchedResult(result, 'lrclib', 96);
     result = await searchLrclib(`${opts.spotifyCanonical.name} ${opts.spotifyCanonical.artist}`);
-    if (result) return { result, source: 'lrclib-search', confidence: 82 };
+    if (result) return fetchedResult(result, 'lrclib-search', 82);
   }
 
   // 3. LRCLIB fuzzy search
   result = await searchLrclib(`${title} ${artist}`);
-  if (result) return { result, source: 'lrclib-search', confidence: 78 };
+  if (result) return fetchedResult(result, 'lrclib-search', 78);
 
   // 4. PetitLyrics
   const pl = await fetchFromPetitLyrics(title, artist);
   if (pl && (pl.synced || pl.plain)) {
-    return { result: pl, source: 'petitlyrics', confidence: pl.synced ? 90 : 82 };
+    return fetchedResult(pl, 'petitlyrics', pl.synced ? 90 : 82);
   }
 
   // 5. Uta-Net
   const un = await fetchFromUtaNet(title, artist);
-  if (un) return { result: un, source: 'uta-net', confidence: 76 };
+  if (un) return fetchedResult(un, 'uta-net', 76);
 
   // 6. ytmusicapi
   const yt = await fetchFromYtMusic(title, artist);
-  if (yt) return { result: yt, source: 'ytmusic', confidence: yt.synced ? 74 : 68 };
+  if (yt) return fetchedResult(yt, 'ytmusic', yt.synced ? 74 : 68);
 
   return { result: null, source: '', confidence: 0 };
 }
