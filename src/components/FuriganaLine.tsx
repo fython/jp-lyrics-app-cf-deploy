@@ -32,6 +32,8 @@ export default function FuriganaLineView({
   readingMode = 'furigana',
   romanizeFurigana = false,
   readingScheme = 'ja-kana',
+  translation,
+  onCopyTranslation,
 }: {
   line: FuriganaLine;
   isActive: boolean;
@@ -45,6 +47,8 @@ export default function FuriganaLineView({
   readingMode?: ReadingMode;
   romanizeFurigana?: boolean;
   readingScheme?: ReadingScheme;
+  translation?: string | null;
+  onCopyTranslation?: () => void;
 }) {
   const { t } = useI18n();
   const [animKey, setAnimKey] = useState(0);
@@ -59,44 +63,60 @@ export default function FuriganaLineView({
 
   if (line.segments.length === 0) return <div className="h-5 sm:h-6" />;
 
-  const lineContent = (
+  // The lyric line's large line-height (2.2 / 2.8) leaves ~0.6em / 0.9em of
+  // half-leading below the text; pull the translation up by that amount so it
+  // hugs the original line, then restore the same space underneath so spacing
+  // to the next lyric line stays uniform. select-none: translations are copied
+  // via the context menu, not by text selection.
+  const translationBlock = translation ? (
     <div
-      className={`lyric-line-context-trigger flex items-baseline gap-2 sm:gap-3 ${onSeek && timestamp != null ? 'cursor-pointer' : ''}`}
-      onClick={onSeek && timestamp != null ? () => onSeek(timestamp) : undefined}
+      className={`lyric-translation select-none -mt-[0.6em] pb-[0.6em] sm:-mt-[0.9em] sm:pb-[0.9em] text-[0.72em] leading-relaxed text-[var(--muted-foreground)]/85 ${debugTs != null ? 'pl-[60px] sm:pl-[72px]' : ''}`}
     >
-      {debugTs != null && (
-        <span className="shrink-0 w-[60px] sm:w-[72px] text-right font-mono text-[10px] text-[var(--primary)] opacity-70 tabular-nums">
-          {fmtMs(debugTs)}
-        </span>
-      )}
+      {translation}
+    </div>
+  ) : null;
+
+  const lineContent = (
+    <div>
       <div
-        key={animKey}
-        className={`lyric-line leading-[2.2] sm:leading-[2.8] transition-all duration-300 ${
-          isActive
-            ? 'lyric-line--active scale-[1.03] origin-left lyric-active'
-            : ''
-        } ${onSeek && timestamp != null ? 'hover:!opacity-100' : ''}`}
-        style={{ fontWeight: isActive ? 700 : 400 }}
+        className={`lyric-line-context-trigger flex items-baseline gap-2 sm:gap-3 ${onSeek && timestamp != null ? 'cursor-pointer' : ''}`}
+        onClick={onSeek && timestamp != null ? () => onSeek(timestamp) : undefined}
       >
-        {normalizeFuriganaSegments(line.segments).map((seg, i) => {
-          if (readingMode === 'original') return <span key={i}>{seg.text}</span>;
-          const reading = resolveFuriganaReading(seg.text, seg.reading, romanizeFurigana, readingScheme);
-          if (!reading) return <span key={i}>{seg.text}</span>;
-          const cantoneseReading = readingScheme === 'yue-jyutping';
-          const koreanWord = romanizeFurigana && isKoreanReadingSegment(seg.text);
-          const katakanaChunk = romanizeFurigana && isKatakanaReadingSegment(seg.text);
-          const rubyClass = cantoneseReading
-            ? 'lyric-ruby--cantonese'
-            : koreanWord
-              ? 'lyric-ruby--korean'
-              : katakanaChunk ? 'lyric-ruby--katakana' : undefined;
-          return (
-            <ruby key={i} className={rubyClass}>
-              {seg.text}<rp>(</rp><rt lang={cantoneseReading ? 'yue-Latn' : romanizeFurigana ? 'en' : 'ja'}>{reading}</rt><rp>)</rp>
-            </ruby>
-          );
-        })}
+        {debugTs != null && (
+          <span className="shrink-0 w-[60px] sm:w-[72px] text-right font-mono text-[10px] text-[var(--primary)] opacity-70 tabular-nums">
+            {fmtMs(debugTs)}
+          </span>
+        )}
+        <div
+          key={animKey}
+          className={`lyric-line leading-[2.2] sm:leading-[2.8] transition-all duration-300 ${
+            isActive
+              ? 'lyric-line--active scale-[1.03] origin-left lyric-active'
+              : ''
+          } ${onSeek && timestamp != null ? 'hover:!opacity-100' : ''}`}
+          style={{ fontWeight: isActive ? 700 : 400 }}
+        >
+          {normalizeFuriganaSegments(line.segments).map((seg, i) => {
+            if (readingMode === 'original') return <span key={i}>{seg.text}</span>;
+            const reading = resolveFuriganaReading(seg.text, seg.reading, romanizeFurigana, readingScheme);
+            if (!reading) return <span key={i}>{seg.text}</span>;
+            const cantoneseReading = readingScheme === 'yue-jyutping';
+            const koreanWord = romanizeFurigana && isKoreanReadingSegment(seg.text);
+            const katakanaChunk = romanizeFurigana && isKatakanaReadingSegment(seg.text);
+            const rubyClass = cantoneseReading
+              ? 'lyric-ruby--cantonese'
+              : koreanWord
+                ? 'lyric-ruby--korean'
+                : katakanaChunk ? 'lyric-ruby--katakana' : undefined;
+            return (
+              <ruby key={i} className={rubyClass}>
+                {seg.text}<rp>(</rp><rt lang={cantoneseReading ? 'yue-Latn' : romanizeFurigana ? 'en' : 'ja'}>{reading}</rt><rp>)</rp>
+              </ruby>
+            );
+          })}
+        </div>
       </div>
+      {translationBlock}
     </div>
   );
 
@@ -108,8 +128,14 @@ export default function FuriganaLineView({
       <ContextMenuContent aria-label={t('song.more')}>
         <ContextMenuItem onSelect={onCopyLine}>
           <Copy className="h-3.5 w-3.5" />
-          {t('song.copy')}
+          {t('song.copyOriginal')}
         </ContextMenuItem>
+        {translation && onCopyTranslation && (
+          <ContextMenuItem onSelect={onCopyTranslation}>
+            <Copy className="h-3.5 w-3.5" />
+            {t('song.copyTranslation')}
+          </ContextMenuItem>
+        )}
         <ContextMenuItem onSelect={onShareLine}>
           <Share2 className="h-3.5 w-3.5" />
           {t('song.share')}

@@ -10,6 +10,7 @@ export const songs = sqliteTable('songs', {
   readingScheme: text('reading_scheme').notNull().default('ja-kana'),
   readingSchemeConfirmed: integer('reading_scheme_confirmed').notNull().default(0),
   lyricsSynced: text('lyrics_synced').notNull().default(''),
+  lyricsTranslation: text('lyrics_translation').notNull().default('[]'),
   coverUrl: text('cover_url'),
   spotifyTrackId: text('spotify_track_id'),
   spotifyUri: text('spotify_uri'),
@@ -68,4 +69,10 @@ export const users = sqliteTable('users', {
   blockedReason: text('blocked_reason').notNull().default(''),
   createdAt: text('created_at').notNull().default(sql`(datetime('now', 'localtime'))`),
   updatedAt: text('updated_at').notNull().default(sql`(datetime('now', 'localtime'))`),
+});
+
+// Key-value store for admin-managed settings (e.g. translation service overrides).
+export const settings = sqliteTable('settings', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
 });

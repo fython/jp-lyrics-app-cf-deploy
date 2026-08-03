@@ -7,6 +7,7 @@ export interface Song {
   reading_scheme: ReadingScheme;
   reading_scheme_confirmed: number;
   lyrics_synced: string;
+  lyrics_translation: string;
   cover_url?: string | null;
   spotify_track_id?: string | null;
   spotify_uri?: string | null;
@@ -47,6 +48,7 @@ export interface SongListItem {
   public_requested: number;
   cover_url?: string | null;
   spotify_track_id?: string | null;
+  spotify_album?: string | null;
   created_at: string;
   updated_at: string;
 }
