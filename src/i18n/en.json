@@ -190,7 +190,17 @@
     "coverRecolored": "Colors re-extracted",
     "clearFailed": "Clear failed",
     "dotParams": "Effect params",
-    "dotParamsReset": "Reset"
+    "dotParamsReset": "Reset",
+    "uploadCover": "Change cover",
+    "coverUploading": "Uploading…",
+    "removeCover": "Remove cover",
+    "coverUploaded": "Cover updated",
+    "coverRemoved": "Cover removed",
+    "coverUploadFailed": "Cover operation failed",
+    "coverTooLarge": "Image must be under 5MB",
+    "coverUnsupported": "Unsupported image format",
+    "coverHint": "JPG / PNG / WebP / GIF, up to 5MB; takes effect immediately",
+    "coverCreateHint": "Optional; if left empty and linked to Spotify, artwork is fetched automatically"
   },
   "timeline": {
     "title": "LRC Timeline Editor",
@@ -276,7 +286,9 @@
     "readingJapanese": "Japanese kana",
     "readingCantonese": "Cantonese Jyutping",
     "readingSchemeHint": "Changing the scheme clears existing annotations and regenerates them with the selected scheme.",
-    "cantoneseDetected": "Cantonese wording detected — use Jyutping annotations"
+    "cantoneseDetected": "Cantonese wording detected — use Jyutping annotations",
+    "titlePlaceholder": "e.g. A Cruel Angel's Thesis",
+    "artistPlaceholder": "e.g. Yoko Takahashi"
   },
   "new": {
     "title": "Add New Song",
@@ -318,7 +330,8 @@
     "linkcore_fetch_failed": "Could not fetch the Linkcore lyrics page. Try again later.",
     "linkcore_invalid_content_type": "This Linkcore link is not a lyrics page",
     "lyrics_not_found": "No importable lyrics were found on this Linkcore page",
-    "linkcoreImportFailed": "Could not import Linkcore lyrics"
+    "linkcoreImportFailed": "Could not import Linkcore lyrics",
+    "readingSchemeHint": "Changing the scheme clears existing annotations and regenerates them with the selected scheme."
   },
   "furigana": {
     "title": "Correct Annotations",
