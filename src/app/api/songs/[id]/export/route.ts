@@ -2,13 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDB, schema } from '@/lib/db';
 import { eq } from 'drizzle-orm';
 import { getAuthUser } from '@/lib/auth';
-
-const escapeHtml = (value: string) => value
-  .replaceAll('&', '&amp;')
-  .replaceAll('<', '&lt;')
-  .replaceAll('>', '&gt;')
-  .replaceAll('"', '&quot;')
-  .replaceAll("'", '&#39;');
+import { normalizeReadingScheme } from '@/lib/lyrics-reading';
+import { buildExport, ExportError, type ExportFormat, type ExportReadingMode, type ExportResult } from '@/lib/lyrics-export';
 
 export async function GET(
   request: NextRequest,
@@ -17,7 +12,12 @@ export async function GET(
   const db = getDB();
   const { id } = await params;
   const user = await getAuthUser(request);
-  const format = request.nextUrl.searchParams.get('format') || 'text';
+
+  const formatParam = request.nextUrl.searchParams.get('format') || 'text';
+  const format: ExportFormat = formatParam === 'lrc' || formatParam === 'html' ? formatParam : 'text';
+  const readingParam = request.nextUrl.searchParams.get('reading') || 'none';
+  const reading: ExportReadingMode = readingParam === 'furigana' || readingParam === 'romaji' ? readingParam : 'none';
+  const includeTranslation = request.nextUrl.searchParams.get('include_translation') === '1';
 
   const song = await db.select({
     title: schema.songs.title,
@@ -25,6 +25,7 @@ export async function GET(
     lyrics_raw: schema.songs.lyricsRaw,
     lyrics_synced: schema.songs.lyricsSynced,
     lyrics_furigana: schema.songs.lyricsFurigana,
+    lyrics_translation: schema.songs.lyricsTranslation,
     reading_scheme: schema.songs.readingScheme,
     created_by: schema.songs.createdBy,
     is_public: schema.songs.isPublic,
@@ -35,77 +36,38 @@ export async function GET(
   }
 
   const filename = `${song.title}${song.artist ? ` - ${song.artist}` : ''}`;
-
-  if (format === 'lrc' && song.lyrics_synced) {
-    return new NextResponse(song.lyrics_synced, {
-      headers: {
-        'Content-Type': 'text/plain; charset=utf-8',
-        'Content-Disposition': `attachment; filename="${encodeURIComponent(filename)}.lrc"`,
+  let result: ExportResult;
+  try {
+    result = buildExport(
+      {
+        title: song.title,
+        artist: song.artist,
+        lyrics_raw: song.lyrics_raw,
+        lyrics_synced: song.lyrics_synced,
+        lyrics_furigana: song.lyrics_furigana,
+        lyrics_translation: song.lyrics_translation,
+        reading_scheme: normalizeReadingScheme(song.reading_scheme),
       },
-    });
-  }
-
-  if (format === 'html') {
-    let furiganaLines: { segments: { text: string; reading?: string }[] }[] = [];
-    try {
-      if (song.lyrics_furigana) furiganaLines = JSON.parse(song.lyrics_furigana);
-    } catch (error) {
-      console.warn(`[export] failed to parse lyrics_furigana for "${song.title}" — ${error instanceof Error ? error.message : String(error)}`);
+      { format, includeTranslation, reading },
+    );
+  } catch (error) {
+    if (error instanceof ExportError) {
+      return NextResponse.json({ error: error.code }, { status: 400 });
     }
-
-    const htmlLines = furiganaLines.length > 0
-      ? furiganaLines.map(line => {
-          if (line.segments.length === 0) return '<p class="empty">&nbsp;</p>';
-          const inner = line.segments.map(seg => {
-            const text = escapeHtml(seg.text);
-            if (!seg.reading) return text;
-            const language = song.reading_scheme === 'yue-jyutping' ? ' lang="yue-Latn"' : '';
-            return `<ruby>${text}<rp>(</rp><rt${language}>${escapeHtml(seg.reading)}</rt><rp>)</rp></ruby>`;
-          }).join('');
-          return `<p>${inner}</p>`;
-        }).join('\n')
-      : (song.lyrics_raw || '').split('\n').map((l: string) => `<p>${l ? escapeHtml(l) : '&nbsp;'}</p>`).join('\n');
-
-    const documentLanguage = song.reading_scheme === 'yue-jyutping' ? 'yue-Hant' : 'ja';
-
-    const html = `<!DOCTYPE html>
-<html lang="${documentLanguage}">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${escapeHtml(song.title)}</title>
-<style>
-  body { max-width: 600px; margin: 2rem auto; padding: 0 1rem; font-family: 'Noto Sans JP', sans-serif; line-height: 2.2; color: #1a1a1a; }
-  h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
-  .artist { color: #666; font-size: 0.9rem; margin-bottom: 2rem; }
-  p { margin: 0; }
-  .empty { height: 1.2em; }
-  rt { font-size: 0.5em; color: #888; }
-  ruby:has(rt[lang="yue-Latn"]) { ruby-overhang: none; white-space: nowrap; }
-  rt[lang="yue-Latn"] { padding-inline: 0.08em; }
-</style>
-</head>
-<body>
-<h1>${escapeHtml(song.title)}</h1>
-${song.artist ? `<p class="artist">${escapeHtml(song.artist)}</p>` : ''}
-${htmlLines}
-</body>
-</html>`;
-
-    return new NextResponse(html, {
-      headers: {
-        'Content-Type': 'text/html; charset=utf-8',
-        'Content-Disposition': `attachment; filename="${encodeURIComponent(filename)}.html"`,
-      },
-    });
+    throw error;
   }
 
-  // Default: plain text
-  const text = song.lyrics_raw || '';
-  return new NextResponse(text, {
+  const { body, contentType, extension } = result;
+
+  const encodedFilename = encodeURIComponent(filename);
+  // RFC 5987: filename*= 带 charset 才会被浏览器百分号解码为中文/日文名；
+  // filename= 保留固定 ASCII 名，作为不支持 filename* 的旧浏览器兜底。
+  const contentDisposition = `attachment; filename="download.${extension}"; filename*=UTF-8''${encodedFilename}.${extension}`;
+
+  return new NextResponse(body, {
     headers: {
-      'Content-Type': 'text/plain; charset=utf-8',
-      'Content-Disposition': `attachment; filename="${encodeURIComponent(filename)}.txt"`,
+      'Content-Type': contentType,
+      'Content-Disposition': contentDisposition,
     },
   });
 }

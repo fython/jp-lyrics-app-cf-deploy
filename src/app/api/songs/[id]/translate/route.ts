@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm';
 import { getAuthUser } from '@/lib/auth';
 import { extractLyricsGlossary, getTranslationConfig, streamTranslateLyricLines, translateLyricLines, TranslationError, type GlossaryEntry } from '@/lib/translation';
 import { getStoredTranslationConfig, resolveTranslationConfig } from '@/lib/translation-settings';
+import { extractCompletedArrayItems } from '@/lib/translation-progress';
 
 const SSE_HEADERS = {
   'Content-Type': 'text/event-stream',
@@ -50,6 +51,7 @@ export async function POST(
     artist: schema.songs.artist,
     lyricsRaw: schema.songs.lyricsRaw,
     lyricsTranslation: schema.songs.lyricsTranslation,
+    lyricsTranslationReasoning: schema.songs.lyricsTranslationReasoning,
     lyricsGlossary: schema.songs.lyricsGlossary,
   }).from(schema.songs).where(eq(schema.songs.id, id)).get();
   if (!existing) {
@@ -216,7 +218,11 @@ export async function POST(
   };
 
   // Streaming mode: forward the provider's reasoning/translation deltas live,
-  // then emit a final `done` event with the aligned translations array.
+  // emit live `progress` events ({ done, total }) so the client can show a
+  // per-line counter, then a final `done` event with the aligned translations
+  // array. On failure, whatever complete lines arrived before the error are
+  // merged into the stored cache (resume support) and reported in the `error`
+  // event so the client can offer a "continue" button with real numbers.
   if (body.stream === true) {
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
@@ -228,22 +234,116 @@ export async function POST(
             // Client disconnected mid-stream (page closed) — stop sending.
           }
         };
+        const total = uniqueLines.length;
+        // Reasoning text streamed so far — persisted on success AND on failure
+        // so the user can review what the model thought before it finished
+        // (or before it errored) from the song page later.
+        let reasoningBuffer = '';
+        // Slice-relative indices that still need the model; entries are filled
+        // in as complete lines stream in (used for partial-cache persistence).
+        const pending: number[] = [...needTranslation];
+        let partial: string[] = [];
+        const emitProgress = (translationText: string) => {
+          const completed = extractCompletedArrayItems(translationText);
+          partial = completed.slice(0, total);
+          const done = Math.min(completed.length, total);
+          if (done > 0) {
+            send('progress', { done, total });
+          }
+        };
         try {
-          const translations = uniqueLines.length > 0
-            ? await streamTranslateLyricLines(uniqueLines, config, (chunk) => send(chunk.type, { text: chunk.text }), fetch, ctx)
+          const translations = total > 0
+            ? await streamTranslateLyricLines(uniqueLines, config, (chunk) => {
+              if (chunk.type === 'translation') emitProgress(chunk.text);
+              else {
+                reasoningBuffer += chunk.text;
+                send(chunk.type, { text: chunk.text });
+              }
+            }, fetch, ctx, request.signal)
             : [];
           const finalSlice = expandAndMerge(translations);
+          // Persist the model's reasoning together with the completed
+          // translation so it survives a page reload / can be re-opened later.
+          if (reasoningBuffer.trim()) {
+            try {
+              await db.update(schema.songs).set({
+                lyricsTranslationReasoning: reasoningBuffer,
+                updatedAt: sql`(datetime('now', 'localtime'))`,
+              }).where(eq(schema.songs.id, id)).run();
+            } catch (reasoningError) {
+              console.warn('[translate] failed to persist reasoning:', reasoningError);
+            }
+          }
           send('done', { start, count: finalSlice.length, translations: finalSlice, cached: false });
         } catch (error) {
-          if (error instanceof TranslationError) {
+          // Client cancelled (cancel button or closed the page): the upstream
+          // fetch was aborted via request.signal, so no AI quota is wasted.
+          // Everything below reuses the failure path — persist streamed
+          // reasoning + completed lines, then report done/total so the
+          // client can offer the resume entry with real numbers.
+          const cancelled = request.signal.aborted;
+          let code = cancelled ? 'translation_cancelled' : 'translation_failed';
+          if (error instanceof TranslationError && !cancelled) {
+            code = error.code;
             console.error(`[translate] stream failed: ${error.code} — ${error.message}`);
-            send('error', { error: error.code });
           } else {
-            console.error('[translate] stream error:', error);
-            send('error', { error: 'translation_failed' });
+            if (cancelled) console.warn('[translate] stream cancelled by client');
+            else console.error('[translate] stream error:', error);
           }
+          // Persist the reasoning streamed before the failure so the user can
+          // see how far the model got (quota / network / output diagnostics).
+          if (reasoningBuffer.trim()) {
+            try {
+              await db.update(schema.songs).set({
+                lyricsTranslationReasoning: reasoningBuffer,
+                updatedAt: sql`(datetime('now', 'localtime'))`,
+              }).where(eq(schema.songs.id, id)).run();
+            } catch (reasoningMergeError) {
+              console.warn('[translate] failed to persist partial reasoning:', reasoningMergeError);
+            }
+          }
+          // Persist whatever complete lines streamed in before the failure so
+          // a retry/continue skips them (partial-translation resume support).
+          let partialDone = 0;
+          if (partial.length > 0) {
+            try {
+              // Map partial line translations to their slice indices, then
+              // merge into the stored cache through the same path as success.
+              pending.forEach((sliceIndex, j) => {
+                if (j < partial.length) resolved[sliceIndex] = partial[j];
+              });
+              // Duplicate copies reuse their first occurrence's translation
+              // (or an earlier cached value) exactly like expandAndMerge.
+              slice.forEach((line, i) => {
+                if (resolved[i] !== null) return;
+                const key = line.trim();
+                if (!key) { resolved[i] = ''; return; }
+                const first = firstOccurrence.get(key)!;
+                const fromPartial = pending.indexOf(first - start);
+                resolved[i] = fromPartial >= 0
+                  ? (partial[fromPartial] ?? '')
+                  : (first < cache.length ? cache[first] : '');
+              });
+              let merged: string[] = [];
+              if (cache.length > 0) merged = [...cache];
+              if (merged.length < lines.length) {
+                merged = [...merged, ...Array(lines.length - merged.length).fill('')];
+              }
+              resolved.forEach((translation, i) => { if (translation) merged[start + i] = translation; });
+              await db.update(schema.songs).set({
+                lyricsTranslation: JSON.stringify(merged),
+                updatedAt: sql`(datetime('now', 'localtime'))`,
+              }).where(eq(schema.songs.id, id)).run();
+              partialDone = partial.length;
+            } catch (mergeError) {
+              console.warn('[translate] failed to persist partial translation:', mergeError);
+            }
+          }
+          send('error', { error: code, done: partialDone, total });
         } finally {
-          controller.close();
+          // After a client disconnect (or a normal close) the stream may
+          // already be closed — closing again throws, so swallow it.
+          try { controller.close(); } catch { /* already closed */ }
         }
       },
     });

@@ -101,6 +101,9 @@
     "noLyrics": "沒有歌詞",
     "pipFailed": "PiP 啟動失敗",
     "syncNotFound": "找不到歌詞",
+    "syncLowConfidenceTitle": "歌詞來自模糊搜尋",
+    "syncLowConfidenceBody": "沒有找到精確匹配的歌詞，以下結果可能不是原曲。確認使用它覆蓋目前歌詞嗎？歌詞文字未變化時會保留注音與翻譯。",
+    "syncLowConfidenceConfirm": "仍要使用",
     "syncNotFoundManual": "找不到歌詞 — 請手動貼上",
     "networkError": "網路錯誤",
     "networkErrorAlert": "發生網路錯誤",
@@ -148,6 +151,22 @@
     "export": "匯出",
     "download": "下載",
     "exportFurigana": "（含注音）",
+    "downloadWithEllipsis": "下載…",
+    "exportSubtitle": "選擇格式與需要輸出的副行",
+    "exportFormatLabel": "格式",
+    "exportReadingLabel": "注音",
+    "exportReadingNone": "原文（不含注音）",
+    "exportReadingNoneHint": "僅輸出歌詞原文",
+    "exportReadingFurigana": "注音（假名 / 粵拼）",
+    "exportReadingFuriganaHint": "在歌詞上方輸出注音",
+    "exportReadingRomaji": "羅馬字注音",
+    "exportReadingRomajiHint": "將假名 / 粵拼注音轉寫為拉丁字母",
+    "exportTranslationLabel": "包含中文翻譯",
+    "exportTranslationHint": "在每行歌詞下方輸出對應的翻譯",
+    "exportDownloadBtn": "下載",
+    "exportLrcHint": "LRC 為時間軸格式，僅包含同步歌詞，不含注音與翻譯",
+    "exportLrcUnavailable": "此歌曲沒有同步時間軸，LRC 匯出將得到空檔案，因此已停用 LRC 格式",
+    "exportLrcDisabledTitle": "此歌曲沒有同步時間軸，LRC 不可用",
     "requestPublic": "申請公開",
     "requestPublicTitle": "公開這首歌詞？",
     "requestPublicBody": "提交後管理員將審核。批准後其他使用者也能看到這首歌詞。",
@@ -179,7 +198,7 @@
     "readingSchemeUpdateFailed": "更新注音方案失敗",
     "translationEdit": "翻譯校正",
     "syncConfirmTitle": "同步歌詞",
-    "syncConfirmBody": "將從線上來源重新取得歌詞，覆蓋目前的歌詞、注音與翻譯；注音和翻譯需要重新產生。確定繼續？",
+    "syncConfirmBody": "將從線上來源重新取得歌詞，覆蓋目前的歌詞與時間軸。歌詞文字未變化時保留注音與翻譯，僅文字變化時才需重新產生。確定繼續？",
     "copyOriginal": "複製原文",
     "copyTranslation": "複製翻譯",
     "copyTranslationEmpty": "尚無翻譯",
@@ -187,6 +206,8 @@
     "translate": "翻譯",
     "translatingProgress": "翻譯中 {done}/{total}",
     "translationContinue": "繼續翻譯",
+    "translationCancel": "取消",
+    "translationCancelled": "已取消，已完成的 {done} 行翻譯已儲存",
     "clearFurigana": "清除假名",
     "clearTranslation": "清除翻譯",
     "recolorCover": "重新取色",
@@ -208,7 +229,14 @@
     "coverTooLarge": "圖片不能超過 1.5MB",
     "coverUnsupported": "不支援的圖片格式",
     "coverHint": "支援 JPG / PNG / WebP / GIF；大圖會自動壓縮後上傳",
-    "coverCreateHint": "可選；留空時若關聯 Spotify 將自動取得封面"
+    "coverCreateHint": "可選；留空時若關聯 Spotify 將自動取得封面",
+    "translationReasoningView": "查看翻譯過程",
+    "copyReasoning": "複製思考",
+    "copyReasoningEmpty": "尚無思考內容",
+    "clearReasoning": "清除思考",
+    "reasoningCleared": "思考已清除",
+    "clearGlossary": "清除術語表",
+    "glossaryCleared": "術語表已清除"
   },
   "timeline": {
     "title": "LRC 時間軸編輯",
@@ -296,7 +324,11 @@
     "readingSchemeHint": "切換注音方案後，現有注音會被清除並按新方案重新產生。",
     "cantoneseDetected": "偵測到粵語用詞，改用粵拼注音",
     "titlePlaceholder": "例如：殘酷天使的行動綱領",
-    "artistPlaceholder": "例如：高橋洋子"
+    "artistPlaceholder": "例如：高橋洋子",
+    "subDataTitle": "清除歌詞相關資料",
+    "subDataHint": "刪除由歌詞衍生的注音、翻譯、思考過程與術語表。歌詞內容變更時會自動失效，這裡可隨時手動清除。",
+    "subDataPresent": "有資料",
+    "subDataEmpty": "無資料"
   },
   "new": {
     "title": "新增歌曲",
@@ -389,7 +421,8 @@
     "landscape": "橫向",
     "portrait": "直向",
     "showQrCode": "顯示 QR Code",
-    "showSourceText": "顯示分享來源文字"
+    "showSourceText": "顯示分享來源文字",
+    "includeTranslation": "包含中文翻譯"
   },
   "admin": {
     "title": "管理後台",
@@ -466,7 +499,10 @@
     "translationInvalidProvider": "無效的服務商",
     "translationLoadFailed": "載入設定失敗",
     "translationApiKeyPlaceholder": "輸入新金鑰…",
-    "translationApiKeyHint": "留空保持不變；金鑰不會回顯，僅顯示打碼形式"
+    "translationApiKeyHint": "留空保持不變；金鑰不會回顯，僅顯示打碼形式",
+    "translationSystemPrompt": "翻譯提示詞（System Prompt）",
+    "translationSystemPromptReset": "重設為預設",
+    "translationSystemPromptHint": "留空使用內建預設提示詞；可在此微調。{{targetLang}}、{{songContext}}、{{glossary}} 佔位符會被自動替換。"
   },
   "translation": {
     "title": "翻譯校正",

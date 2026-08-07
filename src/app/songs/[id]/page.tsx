@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore, useCallback
 import { useRouter, useParams } from 'next/navigation';
 import { useTransitionRouter } from 'next-view-transitions';
 import Link from 'next/link';
-import { RefreshCw, Bug, Clock3, Pencil, Trash2, ArrowLeft, ArrowDown, Minus, Plus, Music, Download, Loader2, ExternalLink, PictureInPicture, Repeat, Copy, Check, MoreVertical, Languages, ChevronDown, Share2, Info, X, CircleAlert, Eraser, Palette, SlidersHorizontal, Brain, FlaskConical } from 'lucide-react';
+import { RefreshCw, Bug, Clock3, Pencil, Trash2, ArrowLeft, ArrowDown, Minus, Plus, Music, Download, Loader2, ExternalLink, PictureInPicture, Repeat, Copy, Check, MoreVertical, Languages, ChevronDown, Share2, Info, X, CircleAlert, Palette, SlidersHorizontal, Brain, FlaskConical } from 'lucide-react';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import CoverImage from '@/components/CoverImage';
 import FuriganaLineView from '@/components/FuriganaLine';
@@ -16,6 +16,8 @@ import Toast from '@/components/Toast';
 import TranslationStatusOverlay from '@/components/TranslationStatusOverlay';
 import { ToolbarMenu, buildReadingMenuItems, type ToolbarMenuItem } from '@/components/song/ToolbarMenu';
 import { MobileMenu } from '@/components/song/MobileMenu';
+import DownloadDialog from '@/components/song/DownloadDialog';
+import { isEmptyAfterTrim } from '@/lib/lyrics-export';
 import SpotifyLoginButton from '@/components/SpotifyLoginButton';
 import { useI18n } from '@/lib/i18n';
 import { fmtMs, fmtTime, findActiveLine } from '@/lib/lrc';
@@ -110,7 +112,7 @@ export default function SongViewPage() {
   const router = useRouter();
   const transitionRouter = useTransitionRouter();
   const params = useParams();
-  const { t } = useI18n();
+  const { t, bcp47 } = useI18n();
   const id = params?.id as string;
   const cachedSong = useMemo(() => getCachedSong(id), [id]);
 
@@ -169,6 +171,7 @@ export default function SongViewPage() {
   // Start with the list's cached cover so the shared element has real visual content on its first render.
   const [fallbackCoverUrl, setFallbackCoverUrl] = useState<string | null>(() => getCachedSongCover(id));
   const [showSongInfo, setShowSongInfo] = useState(false);
+  const [showDownloadDialog, setShowDownloadDialog] = useState(false);
   const [coverRefresh, setCoverRefresh] = useState(0);
   const [showDotParams, setShowDotParams] = useState(false);
   const [showExperiments, setShowExperiments] = useState(false);
@@ -582,18 +585,6 @@ export default function SongViewPage() {
                 },
                 ...(data.debug ? [
                   {
-                    icon: <Eraser className="h-3.5 w-3.5" />,
-                    label: t('song.clearFurigana'),
-                    onClick: () => void data.clearFurigana(),
-                    disabled: !canEdit,
-                  },
-                  {
-                    icon: <Eraser className="h-3.5 w-3.5" />,
-                    label: t('song.clearTranslation'),
-                    onClick: () => void data.clearTranslation(),
-                    disabled: !canEdit,
-                  },
-                  {
                     icon: <Palette className="h-3.5 w-3.5" />,
                     label: t('song.recolorCover'),
                     onClick: () => {
@@ -624,21 +615,10 @@ export default function SongViewPage() {
                   label: t('song.experimentsTitle'),
                   onClick: () => setShowExperiments(true),
                 },
-
                 {
                   icon: <Download className="h-3.5 w-3.5" />,
-                  label: '.txt',
-                  href: `/api/songs/${id}/export?format=text`,
-                },
-                {
-                  icon: <Download className="h-3.5 w-3.5" />,
-                  label: '.lrc',
-                  href: `/api/songs/${id}/export?format=lrc`,
-                },
-                {
-                  icon: <Download className="h-3.5 w-3.5" />,
-                  label: `.html ${t('song.exportFurigana')}`,
-                  href: `/api/songs/${id}/export?format=html`,
+                  label: t('song.downloadWithEllipsis'),
+                  onClick: () => setShowDownloadDialog(true),
                 },
                 {
                   icon: <Trash2 className="h-3.5 w-3.5" />,
@@ -856,8 +836,19 @@ export default function SongViewPage() {
         onOpenPiP={handleOpenPiP} onShowSongInfo={() => setShowSongInfo(true)} onRecolorCover={() => {
           clearCachedSongPalette(id);
           setCoverRefresh((n) => n + 1);
-        }} onToggleDotParams={() => setShowDotParams((v) => !v)} onOpenExperiments={() => setShowExperiments(true)} canEdit={canEdit}
+        }} onToggleDotParams={() => setShowDotParams((v) => !v)} onOpenExperiments={() => setShowExperiments(true)} onOpenDownload={() => setShowDownloadDialog(true)} canEdit={canEdit}
       />
+
+      {/* Download dialog — replaces the previous three export menu items. */}
+      {showDownloadDialog && (
+        <DownloadDialog
+          songId={id}
+          hasReadingData={furiganaLines.length > 0}
+          hasTranslation={data.translations.length > 0}
+          hasSynced={!isEmptyAfterTrim(data.song.lyrics_synced)}
+          onClose={() => setShowDownloadDialog(false)}
+        />
+      )}
 
       {data.debug && showDotParams && (
         <LyricsDotParamsPanel
@@ -883,9 +874,13 @@ export default function SongViewPage() {
         translationError={data.translationError}
         translationReasoning={data.translationReasoning}
         showTranslationReasoning={data.showTranslationReasoning}
-        onToggleReasoning={() => data.setShowTranslationReasoning(!data.showTranslationReasoning)}
+        onToggleReasoning={data.toggleTranslationReasoning}
         onDismissError={data.dismissTranslationError}
+        onCloseReasoning={() => data.setShowTranslationReasoning(false)}
+        onCopyReasoning={() => void data.copyReasoning()}
+        onClearReasoning={() => void data.clearReasoning()}
         onContinue={() => void data.handleTranslate()}
+        onCancel={data.cancelTranslate}
       />
       {data.toast && <Toast type={data.toast.type} message={data.toast.msg} actionLabel={data.toast.actionLabel} onAction={data.toast.onAction} />}
 
@@ -923,10 +918,10 @@ export default function SongViewPage() {
 
             <div className="grid gap-2 p-4 text-xs sm:p-5">
               <div className="rounded-lg bg-[var(--accent)] px-3 py-2.5 text-[var(--muted-foreground)]">
-                {t('common.created')}{new Date(song.created_at).toLocaleString('ja-JP')}
+                {t('common.created')}{new Date(song.created_at).toLocaleString(bcp47)}
               </div>
               <div className="rounded-lg bg-[var(--accent)] px-3 py-2.5 text-[var(--muted-foreground)]">
-                {t('common.updated')}{new Date(song.updated_at).toLocaleString('ja-JP')}
+                {t('common.updated')}{new Date(song.updated_at).toLocaleString(bcp47)}
               </div>
               {hasSyncData && (
                 <div className="rounded-lg bg-[var(--accent)] px-3 py-2.5 text-[var(--success)]">
@@ -990,6 +985,15 @@ export default function SongViewPage() {
           if (url) router.push(url);
         }}
         onCancel={() => data.setImportAlert(null)}
+      />
+      <ConfirmDialog
+        open={!!data.lowConfidenceSync}
+        title={t('song.syncLowConfidenceTitle')}
+        body={t('song.syncLowConfidenceBody')}
+        confirmLabel={t('song.syncLowConfidenceConfirm')}
+        cancelLabel={t('common.cancel')}
+        onConfirm={data.confirmLowConfidenceSync}
+        onCancel={data.cancelLowConfidenceSync}
       />
     </div>
   );

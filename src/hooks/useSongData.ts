@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import type { CoverPaletteJson, FuriganaLine, ReadingMode, ReadingScheme } from '@/lib/types';
 import { mapTimelineTimestamps, parseLrc } from '@/lib/lrc';
 import type { SpotifyState } from './useSpotifySync';
-import { readTranslationStream } from '@/lib/translation-stream';
+import { readTranslationStream, type TranslationProgress } from '@/lib/translation-stream';
 import { TRANSLATION_ERROR_KEYS } from '@/lib/translation-errors';
 import { useI18n } from '@/lib/i18n';
 import { buildManualCreateUrl } from '@/lib/song-prefill';
@@ -59,6 +59,7 @@ interface SongData {
   reading_scheme_confirmed: number;
   lyrics_synced: string;
   lyrics_translation: string;
+  lyrics_translation_reasoning?: string | null;
   cover_url?: string | null;
   cover_palette?: CoverPaletteJson | null;
   spotify_track_id?: string | null;
@@ -100,14 +101,18 @@ export interface UseSongDataReturn {
   setShowTranslation: React.Dispatch<React.SetStateAction<boolean>>;
   translating: boolean;
   translationError: string | null;
-  translationProgress: { done: number; total: number } | null;
+  translationProgress: TranslationProgress | null;
   translationReasoning: string;
   showTranslationReasoning: boolean;
   setShowTranslationReasoning: (show: boolean) => void;
+  toggleTranslationReasoning: () => void;
+  hasSavedReasoning: boolean;
+  openSavedReasoning: () => void;
+  copyReasoning: () => Promise<void>;
   dismissTranslationError: () => void;
-  clearFurigana: () => Promise<void>;
-  clearTranslation: () => Promise<void>;
+  clearReasoning: () => Promise<void>;
   handleTranslate: () => Promise<void>;
+  cancelTranslate: () => void;
   furiganaLoading: boolean;
   furiganaError: string;
   lineTimestamps: (number | null)[];
@@ -132,6 +137,9 @@ export interface UseSongDataReturn {
   toast: ToastState | null;
   allSongs: { id: string; title: string; artist: string; spotify_track_id?: string | null; created_by: string; is_public: number }[];
   handleSync: () => Promise<void>;
+  lowConfidenceSync: { source: string; confidence: number; lines: number; lrc: string } | null;
+  confirmLowConfidenceSync: () => void;
+  cancelLowConfidenceSync: () => void;
   handleDelete: () => void;
   confirmDelete: () => Promise<void>;
   handleCopy: (mode?: 'original' | 'translation') => Promise<void>;
@@ -169,15 +177,36 @@ export function useSongData(id: string): UseSongDataReturn {
   });
   const [translating, setTranslating] = useState(false);
   const [translationError, setTranslationError] = useState<string | null>(null);
-  const [translationProgress, setTranslationProgress] = useState<{ done: number; total: number } | null>(null);
+  const [translationProgress, setTranslationProgress] = useState<TranslationProgress | null>(null);
   const [translationReasoning, setTranslationReasoning] = useState('');
+  // Tracks the in-flight translate request so the user can cancel a long
+  // whole-song translation (or stop an accidental one) without reloading.
+  const translateAbortRef = useRef<AbortController | null>(null);
+  // Mirrors the latest streamed done-count so the cancellation path can
+  // report the real number of saved lines (state reads are async/stale).
+  const translationDoneRef = useRef(0);
   const [showTranslationReasoning, setShowTranslationReasoning] = useState(false);
+  // Track whether any reasoning was persisted server-side for this song. When
+  // set, the 「查看翻译过程」 menu row re-opens the stored reasoning on demand
+  // (even after a reload / after the stream finished).
+  const [hasSavedReasoning, setHasSavedReasoning] = useState(false);
+  // Auto-open the reasoning panel when the model starts emitting reasoning,
+  // but never fight an explicit user collapse during the same session.
+  const reasoningUserHiddenRef = useRef(false);
   const [toast, setToast] = useState<ToastState | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [importAlert, setImportAlert] = useState<ImportAlertState | null>(null);
   const [syncLines, setSyncLines] = useState<ReturnType<typeof parseLrc>>([]);
   const [syncing, setSyncing] = useState(false);
   const [importing, setImporting] = useState(false);
+  // Pending fuzzy-search sync result waiting for explicit user confirmation
+  // (server refuses to overwrite lyrics below the confidence threshold).
+  const [lowConfidenceSync, setLowConfidenceSync] = useState<{
+    source: string;
+    confidence: number;
+    lines: number;
+    lrc: string;
+  } | null>(null);
   const [allSongs, setAllSongs] = useState<{ id: string; title: string; artist: string; spotify_track_id?: string | null; created_by: string; is_public: number }[]>([]);
   const [copied, setCopied] = useState(false);
   const [fontSize, setFontSize] = useState(() => {
@@ -355,6 +384,13 @@ export function useSongData(id: string): UseSongDataReturn {
       .then((data) => {
         setSong(data);
         setLoading(false);
+        if (data.lyrics_translation_reasoning) {
+          setTranslationReasoning(data.lyrics_translation_reasoning);
+          setHasSavedReasoning(true);
+          // Persisted reasoning is reviewed on demand via the menu row — never
+          // auto-open it on page load (it would cover the lyrics).
+          reasoningUserHiddenRef.current = true;
+        }
         if (data.lyrics_synced) setSyncLines(parseLrc(data.lyrics_synced));
         if (!data.spotify_track_id && data.permissions?.can_edit) {
           fetch(`/api/songs/${id}/cover`)
@@ -376,23 +412,47 @@ export function useSongData(id: string): UseSongDataReturn {
   }, [id]);
 
   // Handlers
-  const handleSync = useCallback(async () => {
+  const applySyncResult = useCallback(async (data: {
+    source: string;
+    lines: number;
+    lrc: string;
+  }) => {
+    const songRes = await fetch(`/api/songs/${id}`);
+    if (songRes.ok) {
+      const updated = await songRes.json();
+      setSong(updated);
+      setSyncLines(parseLrc(data.lrc));
+    }
+    const sourceKey = LYRICS_SOURCE_KEYS[data.source];
+    showToast('success', t('song.synced', {
+      source: sourceKey ? t(sourceKey) : data.source,
+      lines: String(data.lines),
+    }));
+  }, [id, t, showToast]);
+
+  const runSync = useCallback(async (force: boolean) => {
     setSyncing(true);
     try {
-      const res = await fetch(`/api/songs/${id}/sync`, { method: 'POST' });
+      const res = await fetch(`/api/songs/${id}/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force }),
+      });
       const data = await res.json();
+      // Fuzzy search below the confidence threshold: the server keeps the
+      // current lyrics untouched — ask before overriding (furigana and
+      // translation would be reset too).
+      if (data.lowConfidence) {
+        setLowConfidenceSync({
+          source: data.source,
+          confidence: data.confidence,
+          lines: data.lines,
+          lrc: data.lrc,
+        });
+        return;
+      }
       if (data.synced) {
-        const songRes = await fetch(`/api/songs/${id}`);
-        if (songRes.ok) {
-          const updated = await songRes.json();
-          setSong(updated);
-          setSyncLines(parseLrc(data.lrc));
-        }
-        const sourceKey = LYRICS_SOURCE_KEYS[data.source];
-        showToast('success', t('song.synced', {
-          source: sourceKey ? t(sourceKey) : data.source,
-          lines: String(data.lines),
-        }));
+        await applySyncResult(data);
       } else {
         const errorKey: Record<string, string> = {
           lyrics_not_found: 'apiErrors.lyricsNotFound',
@@ -409,7 +469,16 @@ export function useSongData(id: string): UseSongDataReturn {
     } finally {
       setSyncing(false);
     }
-  }, [id, t, showToast]);
+  }, [id, t, showToast, applySyncResult]);
+
+  const handleSync = useCallback(() => runSync(false), [runSync]);
+
+  const confirmLowConfidenceSync = useCallback(() => {
+    setLowConfidenceSync(null);
+    void runSync(true);
+  }, [runSync]);
+
+  const cancelLowConfidenceSync = useCallback(() => setLowConfidenceSync(null), []);
 
 
   const handleTranslate = useCallback(async () => {
@@ -422,6 +491,14 @@ export function useSongData(id: string): UseSongDataReturn {
     setTranslating(true);
     setTranslationError(null);
     setTranslationReasoning('');
+    setHasSavedReasoning(false);
+    reasoningUserHiddenRef.current = false;
+    setTranslationProgress(null);
+    translationDoneRef.current = 0;
+    // Own the cancellation signal for this request — the user can abort a
+    // long/accidental whole-song translation via the overlay's cancel button.
+    const controller = new AbortController();
+    translateAbortRef.current = controller;
     try {
       // Whole song in ONE request, streamed via SSE: the model sees the full
       // lyrics (coherent context) and its live reasoning/translation deltas
@@ -431,18 +508,40 @@ export function useSongData(id: string): UseSongDataReturn {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ stream: true }),
+        signal: controller.signal,
       });
       if (!res.ok || !res.body) {
         const data = await res.json().catch(() => ({}));
         throw new Error((data as { error?: string }).error ?? 'translation_failed');
       }
 
-      const { translations, error: streamError } = await readTranslationStream(
+      // Live per-line progress while the model streams its translation array.
+      // The server reports { done, total } over the DISTINCT lines it still
+      // needs to translate (repeats reuse one translation), so show those
+      // numbers as-is — "done/total" reaches completion when the stream ends.
+      const onProgress = (progress: TranslationProgress) => {
+        translationDoneRef.current = progress.done;
+        setTranslationProgress(progress);
+      };
+      // Local accumulator mirrors the streamed reasoning so the error path
+      // below can check whether any reasoning was produced (state is async).
+      let streamedReasoning = '';
+      const { translations, error: streamError, progress: errorProgress } = await readTranslationStream(
         res.body,
-        (delta) => setTranslationReasoning((prev) => prev + delta),
+        (delta) => {
+          streamedReasoning += delta;
+          setTranslationReasoning((prev) => prev + delta);
+        },
+        onProgress,
       );
+      const reasoningStreamed = streamedReasoning.length > 0;
 
       if (translations) {
+        setTranslationProgress(null);
+        // Only advertise the persisted-reasoning menu row when the model
+        // actually produced reasoning (cached hits stream none). The panel
+        // stays open on its own — don't fight an explicit collapse.
+        if (reasoningStreamed) setHasSavedReasoning(true);
         const seed: (string | null)[] = Array(total).fill(null);
         try {
           const parsed = JSON.parse(song?.lyrics_translation ?? '[]');
@@ -458,19 +557,65 @@ export function useSongData(id: string): UseSongDataReturn {
       }
 
       const errorKey = TRANSLATION_ERROR_KEYS;
-      const message = streamError && errorKey[streamError]
-        ? t(errorKey[streamError])
-        : t('song.translationFailed');
+      // A server-reported cancellation carries its own done/total — fill the
+      // placeholder so the notice shows how many lines were saved.
+      const message = streamError === 'translation_cancelled'
+        ? t('song.translationCancelled', { done: String(errorProgress?.done ?? 0) })
+        : streamError && errorKey[streamError]
+          ? t(errorKey[streamError])
+          : t('song.translationFailed');
+      // On failure the server persists whatever lines streamed in before the
+      // error; report progress so the error pill shows the "continue" button
+      // and a real done/total count (断点续译入口). Refresh the song from the
+      // server so partial translations already persisted become visible.
+      if (errorProgress) {
+        setTranslationProgress(errorProgress);
+        if (errorProgress.done > 0) await refreshSong();
+      } else {
+        setTranslationProgress(null);
+      }
+      // The server persists whatever reasoning streamed before the failure;
+      // keep the flag on so the menu can re-open it even after an error.
+      if (reasoningStreamed) setHasSavedReasoning(true);
       setTranslationError(message);
-      showToast('error', message);
+      // Cancellation is informational (partial progress was saved), not an error.
+      showToast(streamError === 'translation_cancelled' ? 'info' : 'error', message);
     } catch {
+      // User pressed cancel (or the request was aborted): the server has
+      // already persisted whatever complete lines streamed in, so refresh
+      // the song and show a friendly cancellation notice instead of a
+      // generic network error. The error pill keeps the resume entry
+      // (「继续翻译」) alive with the real done/total counts.
+      if (controller.signal.aborted) {
+        const doneCount = translationDoneRef.current;
+        const message = t('song.translationCancelled', { done: String(doneCount) });
+        // Keep the error pill's 「继续翻译」 resume entry alive with the real
+        // done/total counts (断点续译) — cancellation is not destructive.
+        setTranslationProgress({ done: doneCount, total });
+        setTranslationError(message);
+        showToast('info', message);
+        if (doneCount > 0) {
+          // The server persists the completed lines asynchronously after it
+          // detects the disconnect — pull once now and once more after a beat
+          // so the partial translations show up even if the first fetch races.
+          await refreshSong();
+          setTimeout(() => { void refreshSong(); }, 400);
+        }
+        return;
+      }
       const message = t('song.networkErrorAlert');
       setTranslationError(message);
       showToast('error', message);
     } finally {
+      translateAbortRef.current = null;
       setTranslating(false);
     }
-  }, [id, song, furiganaLines, t, showToast, translating]);
+  }, [id, song, furiganaLines, t, showToast, translating, refreshSong]);
+
+  /** Abort the in-flight translation request (cancel button on the overlay). */
+  const cancelTranslate = useCallback(() => {
+    translateAbortRef.current?.abort();
+  }, []);
 
   // When the translation display is on but the song has no translation yet,
   // offer to translate it (once per page visit).
@@ -484,54 +629,64 @@ export function useSongData(id: string): UseSongDataReturn {
       !translationPromptedRef.current
     ) {
       translationPromptedRef.current = true;
-      showToast('info', t('song.translationPrompt'), t('song.translate'), () => { void handleTranslate(); });
+      // The business callback owns toast dismissal: tapping 「翻译」 hides the
+      // prompt toast (the generic Toast component stays action-agnostic).
+      showToast('info', t('song.translationPrompt'), t('song.translate'), () => {
+        setToast(null);
+        void handleTranslate();
+      });
     }
   }, [showTranslation, song?.lyrics_raw, translations.length, translating, t, showToast, handleTranslate]);
 
+
+  // Auto-open the reasoning panel as soon as the model starts streaming
+  // reasoning — unless the user has explicitly collapsed it this session.
+  useEffect(() => {
+    if (!translationReasoning.trim() || reasoningUserHiddenRef.current) return;
+    setShowTranslationReasoning(true);
+  }, [translationReasoning, setShowTranslationReasoning]);
+
+  const toggleTranslationReasoning = useCallback(() => {
+    setShowTranslationReasoning((prev) => {
+      const next = !prev;
+      // Collapsing stops the auto-reopen; re-showing re-enables it.
+      reasoningUserHiddenRef.current = !next;
+      return next;
+    });
+  }, []);
+
+  // The menu row 「查看翻译过程」: open the persisted reasoning overlay. If a
+  // translate is currently running, show the live stream; otherwise show the
+  // stored reasoning from the last run.
+  const openSavedReasoning = useCallback(() => {
+    reasoningUserHiddenRef.current = false;
+    setShowTranslationReasoning(true);
+  }, []);
 
   const dismissTranslationError = useCallback(() => {
     setTranslationError(null);
     setTranslationProgress(null);
   }, []);
 
-  /** Debug tooling: wipe the furigana cache so annotations regenerate. */
-  const clearFurigana = useCallback(async () => {
+  /** Clear the persisted translation reasoning so stale thinking can be removed. */
+  const clearReasoning = useCallback(async () => {
     if (!song) return;
     try {
       const res = await fetch(`/api/songs/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clear_furigana: true }),
+        body: JSON.stringify({ clear_reasoning: true }),
       });
       const updated = await res.json();
-      if (!res.ok || !updated?.lyrics_furigana) {
-        showToast('error', t('song.clearFailed'));
-        return;
-      }
-      requestedLyricsRef.current = '';
-      setSong(updated);
-      showToast('success', t('song.furiganaCleared'));
-    } catch {
-      showToast('error', t('song.clearFailed'));
-    }
-  }, [id, song, t, showToast]);
-
-  /** Debug tooling: wipe the translation cache so it can be regenerated. */
-  const clearTranslation = useCallback(async () => {
-    if (!song) return;
-    try {
-      const res = await fetch(`/api/songs/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clear_translation: true }),
-      });
-      const updated = await res.json();
-      if (!res.ok || !updated?.lyrics_translation) {
+      if (!res.ok) {
         showToast('error', t('song.clearFailed'));
         return;
       }
       setSong(updated);
-      showToast('success', t('song.translationCleared'));
+      setTranslationReasoning('');
+      setHasSavedReasoning(false);
+      setShowTranslationReasoning(false);
+      showToast('success', t('song.reasoningCleared'));
     } catch {
       showToast('error', t('song.clearFailed'));
     }
@@ -571,6 +726,21 @@ export function useSongData(id: string): UseSongDataReturn {
       showToast('error', t('song.copyFailed'));
     }
   }, [song, furiganaLines, translations, t, showToast]);
+
+  /** Copy the translation reasoning (live or persisted) to the clipboard. */
+  const copyReasoning = useCallback(async () => {
+    const text = translationReasoning.trim();
+    if (!text) {
+      showToast('error', t('song.copyReasoningEmpty'));
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast('success', t('share.copied'));
+    } catch {
+      showToast('error', t('song.copyFailed'));
+    }
+  }, [translationReasoning, t, showToast]);
 
   const handleImportPlaying = useCallback(async (spotify: SpotifyState | null) => {
     if (!spotify?.track) return;
@@ -764,10 +934,14 @@ export function useSongData(id: string): UseSongDataReturn {
     translationReasoning,
     showTranslationReasoning,
     setShowTranslationReasoning,
+    toggleTranslationReasoning,
+    hasSavedReasoning,
+    openSavedReasoning,
+    copyReasoning,
     dismissTranslationError,
-    clearFurigana,
-    clearTranslation,
+    clearReasoning,
     handleTranslate,
+    cancelTranslate,
     furiganaLoading,
     furiganaError,
     lineTimestamps,
@@ -792,6 +966,9 @@ export function useSongData(id: string): UseSongDataReturn {
     toast,
     allSongs,
     handleSync,
+    lowConfidenceSync,
+    confirmLowConfidenceSync,
+    cancelLowConfidenceSync,
     handleDelete,
     confirmDelete,
     handleCopy,

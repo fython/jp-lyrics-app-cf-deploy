@@ -101,6 +101,9 @@
     "noLyrics": "歌詞がありません",
     "pipFailed": "PiPの開始に失敗しました",
     "syncNotFound": "歌詞が見つかりません",
+    "syncLowConfidenceTitle": "歌詞はあいまい検索で見つかりました",
+    "syncLowConfidenceBody": "完全一致する歌詞が見つかりませんでした。以下の結果は別の曲の可能性があります。この歌詞で現在の歌詞を上書きしますか？歌詞テキストが変わらない場合は読み仮名と翻訳は保持されます。",
+    "syncLowConfidenceConfirm": "この歌詞を使う",
     "syncNotFoundManual": "歌詞が見つかりません — 手動貼付をご利用ください",
     "networkError": "通信エラー",
     "networkErrorAlert": "通信エラーが発生しました",
@@ -148,6 +151,22 @@
     "export": "エクスポート",
     "download": "ダウンロード",
     "exportFurigana": "（注音付き）",
+    "downloadWithEllipsis": "ダウンロード…",
+    "exportSubtitle": "形式と出力する補助行を選択",
+    "exportFormatLabel": "形式",
+    "exportReadingLabel": "読み仮名",
+    "exportReadingNone": "原文（読みなし）",
+    "exportReadingNoneHint": "歌詞の原文のみを出力",
+    "exportReadingFurigana": "読み仮名（かな / 粤拼）",
+    "exportReadingFuriganaHint": "歌詞の上に読みを表示",
+    "exportReadingRomaji": "ローマ字ルビ",
+    "exportReadingRomajiHint": "かな / 粤拼をラテン文字に転写",
+    "exportTranslationLabel": "中国語訳を含める",
+    "exportTranslationHint": "各行の歌詞の下に翻訳を出力",
+    "exportDownloadBtn": "ダウンロード",
+    "exportLrcHint": "LRC はタイムスタンプ形式で、同期歌詞のみ含み、読みや翻訳は含みません",
+    "exportLrcUnavailable": "この曲には同期タイムラインがないため、LRC エクスポートは空ファイルになります。LRC を無効にしました。",
+    "exportLrcDisabledTitle": "同期タイムラインがないため、LRC は利用できません",
     "requestPublic": "公開申請",
     "requestPublicTitle": "この歌詞を公開しますか？",
     "requestPublicBody": "申請後、管理者が審査します。承認されると他のユーザーにも表示されます。",
@@ -179,7 +198,7 @@
     "readingSchemeUpdateFailed": "注音方式を更新できませんでした",
     "translationEdit": "翻訳の編集",
     "syncConfirmTitle": "歌詞を同期",
-    "syncConfirmBody": "オンラインから歌詞を再取得し、現在の歌詞・ふりがな・翻訳を上書きします。ふりがなと翻訳は再生成が必要です。続行しますか？",
+    "syncConfirmBody": "オンラインから歌詞を再取得し、現在の歌詞とタイミングを上書きします。歌詞テキストが変わらない場合はふりがなと翻訳を保持し、変わった場合のみ再生成が必要です。続行しますか？",
     "copyOriginal": "原文をコピー",
     "copyTranslation": "翻訳をコピー",
     "copyTranslationEmpty": "翻訳がありません",
@@ -187,6 +206,8 @@
     "translate": "翻訳",
     "translatingProgress": "翻訳中 {done}/{total}",
     "translationContinue": "翻訳を続ける",
+    "translationCancel": "キャンセル",
+    "translationCancelled": "キャンセルしました。完了した {done} 行の翻訳は保存されています",
     "clearFurigana": "ふりがなをクリア",
     "clearTranslation": "翻訳をクリア",
     "recolorCover": "色を取り直す",
@@ -208,7 +229,14 @@
     "coverTooLarge": "画像は1.5MB以下にしてください",
     "coverUnsupported": "対応していない画像形式です",
     "coverHint": "JPG / PNG / WebP / GIF 対応。大きな画像は自動で圧縮してアップロードします",
-    "coverCreateHint": "任意です。未設定の場合、Spotify 連携があれば自動で取得します"
+    "coverCreateHint": "任意です。未設定の場合、Spotify 連携があれば自動で取得します",
+    "translationReasoningView": "思考プロセスを見る",
+    "copyReasoning": "思考をコピー",
+    "copyReasoningEmpty": "思考内容がありません",
+    "clearReasoning": "思考をクリア",
+    "reasoningCleared": "思考をクリアしました",
+    "clearGlossary": "用語集をクリア",
+    "glossaryCleared": "用語集をクリアしました"
   },
   "timeline": {
     "title": "LRC タイムライン編集",
@@ -296,7 +324,11 @@
     "readingSchemeHint": "注音方式を切り替えると、既存の注音は消去され、新しい方式で再生成されます。",
     "cantoneseDetected": "広東語表現を検出しました。粤拼注音に切り替える",
     "titlePlaceholder": "例：残酷な天使のテーゼ",
-    "artistPlaceholder": "例：高橋洋子"
+    "artistPlaceholder": "例：高橋洋子",
+    "subDataTitle": "歌詞関連データをクリア",
+    "subDataHint": "歌詞から生成されたふりがな・翻訳・思考プロセス・用語集を削除します。歌詞が変わると自動的に無効化されますが、ここで手動でクリアすることもできます。",
+    "subDataPresent": "データあり",
+    "subDataEmpty": "データなし"
   },
   "new": {
     "title": "新しい曲を追加",
@@ -389,7 +421,8 @@
     "landscape": "横向き",
     "portrait": "縦向き",
     "showQrCode": "QRコードを表示",
-    "showSourceText": "共有元テキストを表示"
+    "showSourceText": "共有元テキストを表示",
+    "includeTranslation": "翻訳を含める"
   },
   "admin": {
     "title": "管理画面",
@@ -466,7 +499,10 @@
     "translationInvalidProvider": "無効なプロバイダーです",
     "translationLoadFailed": "設定の読み込みに失敗しました",
     "translationApiKeyPlaceholder": "新しいキーを入力…",
-    "translationApiKeyHint": "空欄の場合は変更しません。キーは表示されず、マスクされた形式のみ表示されます"
+    "translationApiKeyHint": "空欄の場合は変更しません。キーは表示されず、マスクされた形式のみ表示されます",
+    "translationSystemPrompt": "翻訳プロンプト（System Prompt）",
+    "translationSystemPromptReset": "デフォルトに戻す",
+    "translationSystemPromptHint": "空欄の場合は組み込みのデフォルトを使用します。ここで微調整できます。{{targetLang}}、{{songContext}}、{{glossary}} のプレースホルダーは自動的に置換されます。"
   },
   "translation": {
     "title": "翻訳の編集",

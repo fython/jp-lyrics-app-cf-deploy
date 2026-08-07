@@ -7,6 +7,7 @@ import {
   TranslationError,
   type TranslationConfig,
 } from './translation/index.ts';
+import { DEFAULT_SYSTEM_PROMPT, renderSystemPrompt, SYSTEM_PROMPT } from './translation/prompts.ts';
 
 interface CapturedCall {
   input: string | URL | Request;
@@ -27,8 +28,8 @@ function captureFetch(fetchImpl: typeof fetch, captured: { current?: CapturedCal
   }) as typeof fetch;
 }
 
-function openAIBody(captured: CapturedCall): { model: string; messages: { role: string; content: string }[] } {
-  return JSON.parse(String(captured.init.body)) as { model: string; messages: { role: string; content: string }[] };
+function openAIBody(captured: CapturedCall): { model: string; reasoning_effort?: string; messages: { role: string; content: string }[] } {
+  return JSON.parse(String(captured.init.body)) as { model: string; reasoning_effort?: string; messages: { role: string; content: string }[] };
 }
 
 const CFG: TranslationConfig = {
@@ -163,4 +164,93 @@ test('does not duplicate /v1 when base URL already ends with it', async () => {
   );
   assert.ok(captured.current);
   assert.equal(String(captured.current.input), 'https://api.anthropic.com/v1/messages');
+});
+
+test('default system prompt keeps rhetoric conditional and carries a good/bad few-shot pair', () => {
+  const rendered = SYSTEM_PROMPT('zh-CN');
+  // Rhetoric must be conditional: preserve only when the original uses it.
+  assert.match(rendered, /ONLY when the original line itself uses it/);
+  assert.match(rendered, /never force it at the expense of meaning/);
+  // Few-shot good/bad pair anchors what "faithful and natural" means.
+  assert.match(rendered, /Quality reference/);
+  assert.match(rendered, /BAD:/);
+  assert.match(rendered, /GOOD:/);
+  // Placeholders are filled — no raw braces left behind.
+  assert.ok(!rendered.includes('{{'));
+});
+
+test('renderSystemPrompt fills song context and glossary placeholders', () => {
+  const rendered = renderSystemPrompt(DEFAULT_SYSTEM_PROMPT, 'zh-CN', {
+    title: '花火',
+    artist: 'AAA',
+    glossary: [{ original: '花火', translation: '烟花' }],
+  });
+  assert.match(rendered, /title: "花火", artist: "AAA"/);
+  assert.match(rendered, /花火 → 烟花/);
+  assert.ok(!rendered.includes('{{'));
+});
+
+test('admin-overridden system prompt replaces the default template', async () => {
+  const captured: { current?: CapturedCall } = {};
+  const custom = 'Translate like a poet. Target: {{targetLang}}';
+  await translateLyricLines(
+    ['a'],
+    { ...CFG, systemPrompt: custom },
+    captureFetch(mockFetch(200, { choices: [{ message: { content: '["译"]' } }] }), captured),
+  );
+  assert.ok(captured.current);
+  const body = openAIBody(captured.current);
+  const system = body.messages[0].content;
+  assert.match(system, /Translate like a poet/);
+  assert.match(system, /Target: zh-CN/);
+  assert.ok(!system.includes('{{'));
+});
+
+test('OpenAI payload requests low reasoning effort', async () => {
+  const captured: { current?: CapturedCall } = {};
+  await translateLyricLines(
+    ['a'],
+    CFG,
+    captureFetch(mockFetch(200, { choices: [{ message: { content: '["译"]' } }] }), captured),
+  );
+  assert.ok(captured.current);
+  const body = openAIBody(captured.current);
+  assert.equal(body.reasoning_effort, 'low');
+});
+
+test('streaming translation aborts the upstream fetch when the external signal fires', async () => {
+  const { streamTranslateLyricLines } = await import('./translation/index.ts');
+  const controller = new AbortController();
+  let signalSeen: AbortSignal | undefined;
+  let resolveIssued: () => void;
+  const issued = new Promise<void>((resolve) => { resolveIssued = resolve; });
+  const streamFetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    signalSeen = init?.signal as AbortSignal | undefined;
+    resolveIssued();
+    // Simulate an upstream that keeps streaming until aborted.
+    const stream = new ReadableStream<Uint8Array>({
+      start(streamController) {
+        const encoder = new TextEncoder();
+        const push = () => {
+          if (init?.signal?.aborted) {
+            streamController.error(new DOMException('aborted', 'AbortError'));
+            return;
+          }
+          streamController.enqueue(encoder.encode(`data: {"choices":[{"delta":{"content":"[\"译\"]"}}]}\n\n`));
+          setTimeout(push, 5);
+        };
+        push();
+      },
+      cancel() { /* upstream cancelled */ },
+    });
+    return new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+  }) as typeof fetch;
+
+  const run = streamTranslateLyricLines(['a'], CFG, () => {}, streamFetch, undefined, controller.signal);
+  await issued; // upstream request is in flight
+  assert.ok(signalSeen, 'upstream fetch received a signal');
+  assert.ok(!signalSeen!.aborted, 'upstream not aborted yet');
+  controller.abort(); // client cancels → the fetch's signal must abort
+  await assert.rejects(run, (error: unknown) => error instanceof Error);
+  assert.ok(signalSeen!.aborted, 'upstream fetch signal aborted after cancel');
 });

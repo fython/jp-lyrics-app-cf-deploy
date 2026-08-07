@@ -49,9 +49,15 @@ export function useSpectrumCapture(): SpectrumCapture {
       }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const ctx = new AudioContext();
+      // Browsers start AudioContext suspended until a user gesture resumes it;
+      // without this the analyser yields all-zero data and the grid stays dark.
+      await ctx.resume().catch(() => {});
       const source = ctx.createMediaStreamSource(stream);
       const analyser = ctx.createAnalyser();
-      analyser.fftSize = 256; // 128 frequency bins
+      // 2048 → 1024 bins ≈ 23 Hz resolution at 48 kHz. With fftSize 256 the
+      // whole bass region (50–250 Hz) fell into the leftmost 1–2 bins, so
+      // the wave's peak was pinned to the left edge.
+      analyser.fftSize = 2048;
       source.connect(analyser);
       streamRef.current = stream;
       audioCtxRef.current = ctx;

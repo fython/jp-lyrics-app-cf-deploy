@@ -51,6 +51,7 @@ const songFields = {
   reading_scheme_confirmed: schema.songs.readingSchemeConfirmed,
   lyrics_synced: schema.songs.lyricsSynced,
   lyrics_translation: schema.songs.lyricsTranslation,
+  lyrics_translation_reasoning: schema.songs.lyricsTranslationReasoning,
   lyrics_glossary: schema.songs.lyricsGlossary,
   cover_url: schema.songs.coverUrl,
   cover_palette: schema.songs.coverPalette,
@@ -108,7 +109,7 @@ export async function PUT(
   const db = getDB();
   const { id } = await params;
   const body = await request.json();
-  const { title, artist, lyrics_raw, lyrics_synced, reading_scheme, reading_scheme_confirmed, clear_furigana, clear_translation, cover_palette } = body;
+  const { title, artist, lyrics_raw, lyrics_synced, reading_scheme, reading_scheme_confirmed, clear_furigana, clear_translation, clear_reasoning, clear_glossary, cover_palette } = body;
 
   if (cover_palette !== undefined && cover_palette !== null && !isCoverPaletteShape(cover_palette)) {
     return NextResponse.json({ error: 'invalid_cover_palette' }, { status: 400 });
@@ -150,14 +151,22 @@ export async function PUT(
   const lyricsTranslation = clear_translation === true
     ? '[]'
     : lyricsContentChanged ? '[]' : existing.lyrics_translation;
-  // The terminology glossary is tied to the lyrics content; invalidate it on change.
-  const lyricsGlossary = lyricsContentChanged ? null : existing.lyrics_glossary;
+  // Reasoning is tied to the translation run; wipe it whenever the translation
+  // cache is cleared, the lyrics content changes, or explicitly on request
+  // (the clear entry lives on the song editor page).
+  const lyricsTranslationReasoning = (clear_translation === true || lyricsContentChanged || clear_reasoning === true)
+    ? null
+    : existing.lyrics_translation_reasoning;
+  // The terminology glossary is tied to the lyrics content; invalidate it on
+  // change, or explicitly on request (the clear entry lives on the editor).
+  const lyricsGlossary = (lyricsContentChanged || clear_glossary === true) ? null : existing.lyrics_glossary;
   await db.update(schema.songs).set({
     title: title !== undefined ? title : existing.title,
     artist: artist !== undefined ? artist : existing.artist,
     lyricsRaw: newRaw,
     lyricsFurigana,
     lyricsTranslation,
+    lyricsTranslationReasoning,
     lyricsGlossary,
     coverPalette: cover_palette !== undefined
       ? cover_palette === null ? null : JSON.stringify(cover_palette)

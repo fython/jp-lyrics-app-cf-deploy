@@ -29,6 +29,7 @@
 
 import {
   MAX_OUTPUT_TOKENS,
+  REASONING_EFFORT,
   RETRY_ATTEMPTS,
   RETRY_BASE_DELAY_MS,
   TranslationError,
@@ -38,7 +39,7 @@ import {
   type TranslationProvider,
   type TranslationTestResult,
 } from './config.ts';
-import { GLOSSARY_PROMPT, SYSTEM_PROMPT } from './prompts.ts';
+import { DEFAULT_SYSTEM_PROMPT, GLOSSARY_PROMPT, renderSystemPrompt } from './prompts.ts';
 import { extractJsonArray, normalizeTranslations } from './parse.ts';
 
 // Re-export the public configuration API so `@/lib/translation` keeps its
@@ -134,13 +135,19 @@ export async function testTranslationConnection(config: TranslationConfig): Prom
   }
 }
 
+function systemPromptFor(cfg: TranslationConfig, ctx?: TranslationContext): string {
+  return renderSystemPrompt(cfg.systemPrompt ?? DEFAULT_SYSTEM_PROMPT, cfg.targetLang, ctx);
+}
+
 function buildOpenAIPayload(lines: string[], cfg: TranslationConfig, ctx?: TranslationContext) {
   return {
     model: cfg.model,
     max_tokens: MAX_OUTPUT_TOKENS,
     temperature: 0.2,
+    // Short lyric chunks: low reasoning effort keeps latency and token cost down.
+    reasoning_effort: REASONING_EFFORT,
     messages: [
-      { role: 'system', content: SYSTEM_PROMPT(cfg.targetLang, ctx) },
+      { role: 'system', content: systemPromptFor(cfg, ctx) },
       { role: 'user', content: JSON.stringify(lines) },
     ],
   };
@@ -151,7 +158,7 @@ function buildAnthropicPayload(lines: string[], cfg: TranslationConfig, ctx?: Tr
     model: cfg.model,
     max_tokens: MAX_OUTPUT_TOKENS,
     temperature: 0.2,
-    system: SYSTEM_PROMPT(cfg.targetLang, ctx),
+    system: systemPromptFor(cfg, ctx),
     messages: [{ role: 'user', content: JSON.stringify(lines) }],
   };
 }
@@ -262,7 +269,7 @@ async function requestWorkersAI(lines: string[], cfg: TranslationConfig, ctx?: T
   // Dynamic import keeps the node test runner (no @ alias) from resolving
   // the DB-backed usage module unless the workers-ai path is actually used.
   const { checkAiQuota, estimateTokens, neuronsForTokens, recordAiUsage } = await import('@/lib/ai-usage');
-  const prompt = SYSTEM_PROMPT(cfg.targetLang, ctx);
+  const prompt = systemPromptFor(cfg, ctx);
   const inputText = `${prompt}\n${JSON.stringify(lines)}`;
   const quota = await checkAiQuota(neuronsForTokens(estimateTokens(inputText), 0));
   if (!quota.ok) {
@@ -384,11 +391,12 @@ export async function streamTranslateLyricLines(
   onDelta: (chunk: { type: 'reasoning' | 'translation'; text: string }) => void,
   fetchImpl: typeof fetch = fetch,
   ctx?: TranslationContext,
+  signal?: AbortSignal,
 ): Promise<string[]> {
   let text: string;
   if (cfg.provider === 'workers-ai') {
     const { checkAiQuota, estimateTokens, neuronsForTokens, recordAiUsage } = await import('@/lib/ai-usage');
-    const prompt = SYSTEM_PROMPT(cfg.targetLang, ctx);
+    const prompt = systemPromptFor(cfg, ctx);
     const inputText = `${prompt}\n${JSON.stringify(lines)}`;
     const quota = await checkAiQuota(neuronsForTokens(estimateTokens(inputText), 0));
     if (!quota.ok) {
@@ -411,9 +419,9 @@ export async function streamTranslateLyricLines(
     await recordAiUsage(neuronsForTokens(inputTokens, outputTokens));
     onDelta({ type: 'translation', text });
   } else if (cfg.provider === 'anthropic') {
-    text = await streamAnthropic(lines, cfg, onDelta, fetchImpl, ctx);
+    text = await streamAnthropic(lines, cfg, onDelta, fetchImpl, ctx, signal);
   } else {
-    text = await streamOpenAI(lines, cfg, onDelta, fetchImpl, ctx);
+    text = await streamOpenAI(lines, cfg, onDelta, fetchImpl, ctx, signal);
   }
 
   const parsed = extractJsonArray(text);
@@ -429,11 +437,18 @@ async function streamOpenAI(
   onDelta: (chunk: { type: 'reasoning' | 'translation'; text: string }) => void,
   fetchImpl: typeof fetch,
   ctx?: TranslationContext,
+  externalSignal?: AbortSignal,
 ): Promise<string> {
   const url = `${cfg.baseUrl.replace(/\/+$/, '')}/chat/completions`;
   const controller = new AbortController();
+  // 5-minute safety timeout, plus an optional external signal (client
+  // disconnect) so an aborted request stops the upstream call immediately
+  // instead of burning quota until the timeout fires.
+  const onExternalAbort = () => controller.abort();
+  externalSignal?.addEventListener('abort', onExternalAbort, { once: true });
   const timer = setTimeout(() => controller.abort(), 300_000);
   try {
+    if (externalSignal?.aborted) controller.abort();
     const response = await fetchImpl(url, {
       method: 'POST',
       headers: {
@@ -490,6 +505,7 @@ async function streamOpenAI(
     return content;
   } finally {
     clearTimeout(timer);
+    externalSignal?.removeEventListener('abort', onExternalAbort);
   }
 }
 
@@ -500,12 +516,19 @@ async function streamAnthropic(
   onDelta: (chunk: { type: 'reasoning' | 'translation'; text: string }) => void,
   fetchImpl: typeof fetch,
   ctx?: TranslationContext,
+  externalSignal?: AbortSignal,
 ): Promise<string> {
   const base = cfg.baseUrl.replace(/\/+$/, '');
   const url = base.endsWith('/v1') ? `${base}/messages` : `${base}/v1/messages`;
   const controller = new AbortController();
+  // 5-minute safety timeout, plus an optional external signal (client
+  // disconnect) so an aborted request stops the upstream call immediately
+  // instead of burning quota until the timeout fires.
+  const onExternalAbort = () => controller.abort();
+  externalSignal?.addEventListener('abort', onExternalAbort, { once: true });
   const timer = setTimeout(() => controller.abort(), 300_000);
   try {
+    if (externalSignal?.aborted) controller.abort();
     const response = await fetchImpl(url, {
       method: 'POST',
       headers: {
@@ -558,6 +581,7 @@ async function streamAnthropic(
     return content;
   } finally {
     clearTimeout(timer);
+    externalSignal?.removeEventListener('abort', onExternalAbort);
   }
 }
 

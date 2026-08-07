@@ -101,6 +101,9 @@
     "noLyrics": "No lyrics",
     "pipFailed": "Failed to start PiP",
     "syncNotFound": "Lyrics not found",
+    "syncLowConfidenceTitle": "Lyrics from fuzzy search",
+    "syncLowConfidenceBody": "No exact match found — this result may not be the original song. Replace the current lyrics with it? Furigana and translation are kept if the lyric text is unchanged.",
+    "syncLowConfidenceConfirm": "Use anyway",
     "syncNotFoundManual": "Lyrics not found — please paste manually",
     "networkError": "Network error",
     "networkErrorAlert": "A network error occurred",
@@ -148,6 +151,22 @@
     "export": "Export",
     "download": "Download",
     "exportFurigana": "(with annotations)",
+    "downloadWithEllipsis": "Download…",
+    "exportSubtitle": "Pick a format and the extra lines to include",
+    "exportFormatLabel": "Format",
+    "exportReadingLabel": "Readings",
+    "exportReadingNone": "Original (no readings)",
+    "exportReadingNoneHint": "Outputs the original lyric text only",
+    "exportReadingFurigana": "Annotations (kana / Jyutping)",
+    "exportReadingFuriganaHint": "Renders readings above the lyrics",
+    "exportReadingRomaji": "Romanized readings",
+    "exportReadingRomajiHint": "Transliterates kana / Jyutping into Latin script",
+    "exportTranslationLabel": "Include Chinese translation",
+    "exportTranslationHint": "Pairs each lyric line with its translation below",
+    "exportDownloadBtn": "Download",
+    "exportLrcHint": "LRC is a timed format — synced lyrics only, no readings or translations",
+    "exportLrcUnavailable": "This song has no synced timeline, so the LRC export would be an empty file. LRC has been disabled.",
+    "exportLrcDisabledTitle": "LRC is unavailable — this song has no synced timeline",
     "requestPublic": "Request Public",
     "requestPublicTitle": "Make this lyrics public?",
     "requestPublicBody": "An admin will review your request. Once approved, it will be visible to other users.",
@@ -179,7 +198,7 @@
     "readingSchemeUpdateFailed": "Failed to update the annotation scheme",
     "translationEdit": "Edit translation",
     "syncConfirmTitle": "Sync lyrics",
-    "syncConfirmBody": "Fetches lyrics from the online source and overwrites the current lyrics, furigana and translation; both annotations will need to be regenerated. Continue?",
+    "syncConfirmBody": "Fetches lyrics from the online source and overwrites the current lyrics and timing. If the lyric text is unchanged, your furigana annotations and translation are kept; otherwise they will need to be regenerated. Continue?",
     "copyOriginal": "Copy original",
     "copyTranslation": "Copy translation",
     "copyTranslationEmpty": "No translation available",
@@ -187,6 +206,8 @@
     "translate": "Translate",
     "translatingProgress": "Translating {done}/{total}",
     "translationContinue": "Continue translating",
+    "translationCancel": "Cancel",
+    "translationCancelled": "Cancelled — {done} translated line(s) saved",
     "clearFurigana": "Clear furigana",
     "clearTranslation": "Clear translation",
     "recolorCover": "Re-extract cover colors",
@@ -208,7 +229,14 @@
     "coverTooLarge": "Image must be under 1.5MB",
     "coverUnsupported": "Unsupported image format",
     "coverHint": "JPG / PNG / WebP / GIF; large images are auto-compressed before upload",
-    "coverCreateHint": "Optional; if left empty and linked to Spotify, artwork is fetched automatically"
+    "coverCreateHint": "Optional; if left empty and linked to Spotify, artwork is fetched automatically",
+    "translationReasoningView": "View reasoning",
+    "copyReasoning": "Copy reasoning",
+    "copyReasoningEmpty": "No reasoning available",
+    "clearReasoning": "Clear reasoning",
+    "reasoningCleared": "Reasoning cleared",
+    "clearGlossary": "Clear glossary",
+    "glossaryCleared": "Glossary cleared"
   },
   "timeline": {
     "title": "LRC Timeline Editor",
@@ -296,7 +324,11 @@
     "readingSchemeHint": "Changing the scheme clears existing annotations and regenerates them with the selected scheme.",
     "cantoneseDetected": "Cantonese wording detected — use Jyutping annotations",
     "titlePlaceholder": "e.g. A Cruel Angel's Thesis",
-    "artistPlaceholder": "e.g. Yoko Takahashi"
+    "artistPlaceholder": "e.g. Yoko Takahashi",
+    "subDataTitle": "Clear lyrics-derived data",
+    "subDataHint": "Remove the furigana, translation, reasoning and glossary derived from these lyrics. They are invalidated automatically when the lyrics change; you can also clear them manually here.",
+    "subDataPresent": "Has data",
+    "subDataEmpty": "Empty"
   },
   "new": {
     "title": "Add New Song",
@@ -389,7 +421,8 @@
     "landscape": "Landscape",
     "portrait": "Portrait",
     "showQrCode": "Show QR code",
-    "showSourceText": "Show source text"
+    "showSourceText": "Show source text",
+    "includeTranslation": "Include translation"
   },
   "admin": {
     "title": "Admin",
@@ -466,7 +499,10 @@
     "translationInvalidProvider": "Invalid provider",
     "translationLoadFailed": "Failed to load config",
     "translationApiKeyPlaceholder": "Enter a new key…",
-    "translationApiKeyHint": "Leave blank to keep the current key; keys are never echoed back, only masked"
+    "translationApiKeyHint": "Leave blank to keep the current key; keys are never echoed back, only masked",
+    "translationSystemPrompt": "Translation system prompt",
+    "translationSystemPromptReset": "Reset to default",
+    "translationSystemPromptHint": "Leave empty to use the built-in default prompt; fine-tune it here. The {{targetLang}}, {{songContext}} and {{glossary}} placeholders are filled in automatically."
   },
   "translation": {
     "title": "Edit translation",
