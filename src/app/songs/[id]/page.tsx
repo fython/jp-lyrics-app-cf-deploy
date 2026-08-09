@@ -21,7 +21,7 @@ import { isEmptyAfterTrim } from '@/lib/lyrics-export';
 import SpotifyLoginButton from '@/components/SpotifyLoginButton';
 import { useI18n } from '@/lib/i18n';
 import { fmtMs, fmtTime, findActiveLine } from '@/lib/lrc';
-import { isTitleMatch, findBestMatch } from '@/lib/match';
+import { findBestMatch } from '@/lib/match';
 import { useSongData } from '@/hooks/useSongData';
 import { useSpotifySync } from '@/hooks/useSpotifySync';
 import { animateSmoothScroll } from '@/lib/scroll-ease';
@@ -125,6 +125,8 @@ export default function SongViewPage() {
   // Mutable ref bag for the rAF sync loop (avoids stale closures)
   const syncRefs = useRef<SyncRefs>({
     songTitle: '',
+    songArtist: '',
+    spotifyTrackId: null,
     furiganaLines: [],
     lineTimestamps: [],
     debug: false,
@@ -145,6 +147,8 @@ export default function SongViewPage() {
 
   // Keep syncRefs in sync with state
   useEffect(() => { syncRefs.current.songTitle = data.song?.title || ''; }, [data.song?.title]);
+  useEffect(() => { syncRefs.current.songArtist = data.song?.artist || ''; }, [data.song?.artist]);
+  useEffect(() => { syncRefs.current.spotifyTrackId = data.song?.spotify_track_id || null; }, [data.song?.spotify_track_id]);
   useEffect(() => { syncRefs.current.furiganaLines = data.furiganaLines; }, [data.furiganaLines]);
   useEffect(() => { syncRefs.current.lineTimestamps = data.lineTimestamps; }, [data.lineTimestamps]);
   useEffect(() => { syncRefs.current.debug = data.debug; }, [data.debug]);
@@ -295,13 +299,8 @@ export default function SongViewPage() {
   const canEdit = song?.permissions?.can_edit === true;
   const lyricsSourceKey = song ? LYRICS_SOURCE_KEYS[song.lyrics_source] : undefined;
   const lyricsSourceLabel = song ? (lyricsSourceKey ? t(lyricsSourceKey) : song.lyrics_source) : '';
-  const { spotify, activeLine, followPlaying, setFollowPlaying, pipWindowRef } = sync;
+  const { spotify, syncState, resumeSync, activeLine, isSameSong, followPlaying, setFollowPlaying, pipWindowRef } = sync;
   const handleOpenPiP = () => data.openPiP(furiganaLines, song, activeLine, pipWindowRef, lineTimestamps);
-  const isSameSong = !!(spotify?.is_playing && spotify.track && song && (
-    song.spotify_track_id && spotify.track.id
-      ? song.spotify_track_id === spotify.track.id
-      : isTitleMatch(spotify.track.name, song.title)
-  ));
   const isSynced = isSameSong && activeLine >= 0;
   const hasSyncData = syncLines.length > 0;
   const debugSyncActive = spotify?.is_playing && syncLines.length > 0 ? findActiveLine(syncLines, spotify.progress_ms) : -1;
@@ -431,26 +430,7 @@ export default function SongViewPage() {
               ) : (
                 <span className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-medium bg-[var(--muted)] text-[var(--muted-foreground)]">
                   {t('admin.private')}
-                  {isAdmin ? (
-                    <button
-                      onClick={async () => {
-                        try {
-                          const res = await fetch(`/api/admin/songs/${id}`, {
-                            method: 'PUT',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ is_public: 1 }),
-                          });
-                          if (res.ok) {
-                            data.refreshSong();
-                            data.showToast('success', t('admin.approved'));
-                          }
-                        } catch {}
-                      }}
-                      className="text-[var(--song-accent)] hover:text-[var(--song-accent)]/80 underline transition-colors"
-                    >
-                      {t('admin.setPublic')}
-                    </button>
-                  ) : canEdit && song.public_requested !== 1 ? (
+                  {canEdit && song.public_requested !== 1 ? (
                     <button
                       onClick={async () => {
                         try {
@@ -641,7 +621,20 @@ export default function SongViewPage() {
 
         {/* Spotify playback status stays mounted so loading/resolved state cannot move the lyrics layout. */}
         <div className="mt-2 sm:mt-4 flex min-h-7 items-center gap-2">
-            {spotifyConnected === null || !spotify ? (
+            {syncState === 'stopped' ? (
+              <div className="flex items-center gap-1.5 sm:gap-2 rounded-full bg-[var(--warning-muted)] border border-[var(--warning)]/40 px-2 sm:px-3 py-1">
+                <span className="inline-block h-2 w-2 rounded-full bg-[var(--warning)]" />
+                <span className="text-xs text-[var(--warning)]">{t('song.syncStopped')}</span>
+                <button onClick={() => void resumeSync()} className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium bg-[var(--warning)]/20 text-[var(--warning)] hover:bg-[var(--warning)]/30 transition-colors shrink-0">
+                  <RefreshCw className="h-3 w-3" /><span>{t('song.resumeSync')}</span>
+                </button>
+              </div>
+            ) : syncState === 'retrying' ? (
+              <div className="flex items-center gap-1.5 sm:gap-2 rounded-full bg-[var(--warning-muted)] border border-[var(--warning)]/30 px-2 sm:px-3 py-1">
+                <Loader2 className="h-3 w-3 animate-spin text-[var(--warning)]" />
+                <span className="text-xs text-[var(--warning)]">{t('song.syncRetrying')}</span>
+              </div>
+            ) : spotifyConnected === null || !spotify ? (
               <div className="song-playing-surface flex items-center gap-1.5 sm:gap-2 rounded-full px-2 sm:px-3 py-1">
                 {spotifyConnected === null ? <Loader2 className="h-3 w-3 animate-spin text-[var(--muted-foreground)]" /> : <span className="inline-block h-2 w-2 rounded-full bg-[var(--muted-foreground)]" />}
                 <span className="text-xs text-[var(--muted-foreground)] truncate max-w-[180px] sm:max-w-none">
@@ -800,14 +793,50 @@ export default function SongViewPage() {
                 <span>{t('song.loadingFurigana')}</span>
               </div>
             ) : data.furiganaError ? (
-              <div className="flex flex-col gap-3 py-8">
+              <div className="flex flex-col gap-4 py-8">
                 <div className="flex items-center gap-2 text-sm text-[var(--warning)]">
                   <span>{data.furiganaError}</span>
                 </div>
                 <pre className="whitespace-pre-wrap font-sans leading-relaxed text-[var(--muted-foreground)]" style={{ fontSize: `${data.fontSize}px` }}>{song.lyrics_raw}</pre>
+                {canEdit && (
+                  <button
+                    type="button"
+                    onClick={data.retryFurigana}
+                    disabled={data.furiganaLoading}
+                    className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium song-accent-button self-start disabled:opacity-50"
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 ${data.furiganaLoading ? 'animate-spin' : ''}`} />
+                    {t('song.furiganaRetry')}
+                  </button>
+                )}
               </div>
             ) : (
-              <p className="text-sm text-[var(--muted-foreground)]">{t('song.noLyricsSimple')}</p>
+              <div className="flex flex-col items-center gap-3 py-10 text-center">
+                <p className="text-sm text-[var(--muted-foreground)]">{t('song.noLyricsSimple')}</p>
+                {canEdit ? (
+                  <div className="flex flex-wrap items-center justify-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowSyncConfirm(true)}
+                      disabled={data.syncing}
+                      className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium song-editor-primary-button disabled:opacity-50"
+                    >
+                      <RefreshCw className={`h-3.5 w-3.5 ${data.syncing ? 'animate-spin' : ''}`} />
+                      {data.syncing ? t('song.syncing') : t('song.noLyricsSync')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => router.push(`/songs/${id}/edit`)}
+                      className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium song-accent-button"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                      {t('song.noLyricsEdit')}
+                    </button>
+                  </div>
+                ) : (
+                  <p className="text-xs text-[var(--muted-foreground)]/80">{t('song.noLyricsWaiting')}</p>
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -934,6 +963,11 @@ export default function SongViewPage() {
               <div className={`rounded-lg bg-[var(--accent)] px-3 py-2.5 ${(song.lyrics_confidence ?? 100) >= 90 ? 'text-[var(--success)]' : (song.lyrics_confidence ?? 100) >= 75 ? 'text-[var(--warning)]' : 'text-[var(--destructive)]'}`}>
                 {t('song.lyricsConfidence', { confidence: String(song.lyrics_confidence ?? 100) })}
               </div>
+              {song.lyrics_needs_review === 1 && (
+                <div className="rounded-lg bg-[var(--accent)] px-3 py-2.5 text-[var(--warning)]">
+                  {t('song.lyricsNeedsReview')}
+                </div>
+              )}
               {song.spotify_track_id && (
                 <div className="break-all rounded-lg bg-[var(--accent)] px-3 py-2.5 text-[var(--muted-foreground)]">
                   {t('song.spotifyTrackId', { id: song.spotify_track_id })}
@@ -987,6 +1021,21 @@ export default function SongViewPage() {
         onCancel={() => data.setImportAlert(null)}
       />
       <ConfirmDialog
+        open={!!data.importReview}
+        title={t('home.importReviewTitle')}
+        body={data.importReview ? t('home.importReviewBody', {
+          title: data.importReview.title,
+          source: data.importReview.source,
+          confidence: String(data.importReview.confidence),
+          lines: String(data.importReview.lines),
+          preview: data.importReview.preview,
+        }) : ''}
+        confirmLabel={t('home.importReviewConfirm')}
+        cancelLabel={t('common.cancel')}
+        onConfirm={() => void data.confirmImportReview()}
+        onCancel={() => data.setImportReview(null)}
+      />
+      <ConfirmDialog
         open={!!data.lowConfidenceSync}
         title={t('song.syncLowConfidenceTitle')}
         body={t('song.syncLowConfidenceBody')}
@@ -994,6 +1043,21 @@ export default function SongViewPage() {
         cancelLabel={t('common.cancel')}
         onConfirm={data.confirmLowConfidenceSync}
         onCancel={data.cancelLowConfidenceSync}
+      />
+      <ConfirmDialog
+        open={!!data.plainHitSync}
+        title={t('song.plainHitTitle')}
+        body={t('song.plainHitBody', {
+          source: data.plainHitSync
+            ? (LYRICS_SOURCE_KEYS[data.plainHitSync.source]
+              ? t(LYRICS_SOURCE_KEYS[data.plainHitSync.source])
+              : data.plainHitSync.source)
+            : '',
+        })}
+        confirmLabel={t('song.plainHitConfirm')}
+        cancelLabel={t('common.cancel')}
+        onConfirm={data.confirmPlainSync}
+        onCancel={data.cancelPlainSync}
       />
     </div>
   );

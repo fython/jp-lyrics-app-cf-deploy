@@ -7,6 +7,7 @@
     "dev": "next dev",
     "start": "next start",
     "test": "node --experimental-strip-types --test src/lib/*.test.ts",
+    "validate:i18n": "node scripts/validate-i18n.mjs",
     "lint": "eslint",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
@@ -52,7 +53,12 @@
     "form-data": "4.0.6",
     "js-yaml": "4.3.1",
     "ws": "8.21.2",
-    "brace-expansion": "5.0.9",
+    "minimatch@3": {
+      "brace-expansion": "2.1.4"
+    },
+    "minimatch@8": {
+      "brace-expansion": "2.1.4"
+    },
     "@esbuild-kit/core-utils": {
       "esbuild": "0.25.12"
     },

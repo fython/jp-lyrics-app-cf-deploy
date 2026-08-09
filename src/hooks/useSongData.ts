@@ -70,6 +70,7 @@ interface SongData {
   spotify_canonical_artist?: string | null;
   lyrics_source: string;
   lyrics_confidence: number;
+  lyrics_needs_review: number;
   lyrics_fetched_at: string | null;
   permissions?: { can_edit: boolean };
   is_public: number;
@@ -88,6 +89,18 @@ interface ToastState {
 export interface ImportAlertState {
   message: string;
   manualCreateUrl?: string;
+}
+
+/** Pending low-confidence import candidate waiting for explicit user confirmation. */
+export interface ImportReviewState {
+  title: string;
+  artist: string;
+  spotifyTrackId?: string;
+  source: string;
+  confidence: number;
+  lines: number;
+  preview: string;
+  synced: boolean;
 }
 
 export interface UseSongDataReturn {
@@ -115,6 +128,7 @@ export interface UseSongDataReturn {
   cancelTranslate: () => void;
   furiganaLoading: boolean;
   furiganaError: string;
+  retryFurigana: () => void;
   lineTimestamps: (number | null)[];
   syncing: boolean;
   importing: boolean;
@@ -132,6 +146,9 @@ export interface UseSongDataReturn {
   setDeleteConfirm: React.Dispatch<React.SetStateAction<boolean>>;
   importAlert: ImportAlertState | null;
   setImportAlert: React.Dispatch<React.SetStateAction<ImportAlertState | null>>;
+  importReview: ImportReviewState | null;
+  setImportReview: React.Dispatch<React.SetStateAction<ImportReviewState | null>>;
+  confirmImportReview: () => Promise<void>;
   fontSize: number;
   setFontSize: React.Dispatch<React.SetStateAction<number>>;
   toast: ToastState | null;
@@ -140,6 +157,9 @@ export interface UseSongDataReturn {
   lowConfidenceSync: { source: string; confidence: number; lines: number; lrc: string } | null;
   confirmLowConfidenceSync: () => void;
   cancelLowConfidenceSync: () => void;
+  plainHitSync: { source: string; confidence: number; plain: string } | null;
+  confirmPlainSync: () => void;
+  cancelPlainSync: () => void;
   handleDelete: () => void;
   confirmDelete: () => Promise<void>;
   handleCopy: (mode?: 'original' | 'translation') => Promise<void>;
@@ -194,8 +214,10 @@ export function useSongData(id: string): UseSongDataReturn {
   // but never fight an explicit user collapse during the same session.
   const reasoningUserHiddenRef = useRef(false);
   const [toast, setToast] = useState<ToastState | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [importAlert, setImportAlert] = useState<ImportAlertState | null>(null);
+  const [importReview, setImportReview] = useState<ImportReviewState | null>(null);
   const [syncLines, setSyncLines] = useState<ReturnType<typeof parseLrc>>([]);
   const [syncing, setSyncing] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -206,6 +228,13 @@ export function useSongData(id: string): UseSongDataReturn {
     confidence: number;
     lines: number;
     lrc: string;
+  } | null>(null);
+  // Pending plain-text sync result (no LRC timeline) waiting for explicit user
+  // confirmation (server refuses to overwrite lyrics/timeline without it).
+  const [plainHitSync, setPlainHitSync] = useState<{
+    source: string;
+    confidence: number;
+    plain: string;
   } | null>(null);
   const [allSongs, setAllSongs] = useState<{ id: string; title: string; artist: string; spotify_track_id?: string | null; created_by: string; is_public: number }[]>([]);
   const [copied, setCopied] = useState(false);
@@ -274,6 +303,7 @@ export function useSongData(id: string): UseSongDataReturn {
   }, [serverFurigana, clientFuriganaState, readingSourceKey, plainFuriganaLines]);
 
   // Client-side furigana conversion: only once per lyrics value when server data is absent.
+  const [furiganaRetryTick, setFuriganaRetryTick] = useState(0);
   useEffect(() => {
     if (!lyricsRaw.trim() || serverFurigana.length > 0 || !hasHanCharacters || cantoneseSuggestion) return;
     const requestKey = `${id}\u0000${readingSourceKey}`;
@@ -317,7 +347,14 @@ export function useSongData(id: string): UseSongDataReturn {
       cancelled = true;
       if (!settled && requestedLyricsRef.current === requestKey) requestedLyricsRef.current = '';
     };
-  }, [lyricsRaw, serverFurigana.length, hasHanCharacters, cantoneseSuggestion, id, readingScheme, readingSourceKey, song?.permissions?.can_edit, t]);
+  }, [lyricsRaw, serverFurigana.length, hasHanCharacters, cantoneseSuggestion, id, readingScheme, readingSourceKey, song?.permissions?.can_edit, t, furiganaRetryTick]);
+
+  // Retry a failed client-side furigana conversion: the effect only runs once
+  // per lyrics value, so clear the guard and bump the tick to re-run it.
+  const retryFurigana = useCallback(() => {
+    requestedLyricsRef.current = '';
+    setFuriganaRetryTick((n) => n + 1);
+  }, []);
 
   const lineTimestamps = useMemo(() => {
     if (!song || !furiganaLines.length) return [] as (number | null)[];
@@ -326,9 +363,18 @@ export function useSongData(id: string): UseSongDataReturn {
   }, [song, furiganaLines]);
 
   const showToast = useCallback((type: 'success' | 'error' | 'info', msg: string, actionLabel?: string, onAction?: () => void) => {
+    // Clear any pending timer from a previous toast so it cannot dismiss the new one early.
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     setToast({ type, msg, actionLabel, onAction });
     // Action toasts stay longer so the user has time to react.
-    setTimeout(() => setToast(null), actionLabel ? 8000 : 3000);
+    toastTimerRef.current = setTimeout(() => {
+      toastTimerRef.current = null;
+      setToast(null);
+    }, actionLabel ? 8000 : 3000);
+  }, []);
+
+  useEffect(() => () => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
   }, []);
 
   const updateReadingPreference = useCallback(async (payload: {
@@ -430,13 +476,13 @@ export function useSongData(id: string): UseSongDataReturn {
     }));
   }, [id, t, showToast]);
 
-  const runSync = useCallback(async (force: boolean) => {
+  const runSync = useCallback(async (force: boolean, confirmPlain = false) => {
     setSyncing(true);
     try {
       const res = await fetch(`/api/songs/${id}/sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ force }),
+        body: JSON.stringify({ force, confirmPlain }),
       });
       const data = await res.json();
       // Fuzzy search below the confidence threshold: the server keeps the
@@ -449,6 +495,27 @@ export function useSongData(id: string): UseSongDataReturn {
           lines: data.lines,
           lrc: data.lrc,
         });
+        return;
+      }
+      // Plain-text hit (no LRC timeline): nothing was written yet — ask the
+      // user whether to replace the current lyrics with this plain text.
+      if (data.plainHit) {
+        setPlainHitSync({
+          source: data.source,
+          confidence: data.confidence,
+          plain: data.plain,
+        });
+        return;
+      }
+      // Confirmed plain-text overwrite succeeded (no timeline remains).
+      if (data.plainUpdated) {
+        const updated = await fetch(`/api/songs/${id}`, { cache: 'no-store' });
+        if (updated.ok) setSong(await updated.json());
+        setSyncLines([]);
+        const sourceKey = LYRICS_SOURCE_KEYS[data.source];
+        showToast('success', t('song.plainUpdated', {
+          source: sourceKey ? t(sourceKey) : data.source,
+        }));
         return;
       }
       if (data.synced) {
@@ -479,6 +546,16 @@ export function useSongData(id: string): UseSongDataReturn {
   }, [runSync]);
 
   const cancelLowConfidenceSync = useCallback(() => setLowConfidenceSync(null), []);
+
+  // Re-run sync with the plain-text overwrite confirmed. The server writes the
+  // plain lyrics and clears the timeline (LRC) — the user has explicitly accepted
+  // losing the old timed lyrics in exchange for the newly fetched plain text.
+  const confirmPlainSync = useCallback(() => {
+    setPlainHitSync(null);
+    void runSync(true, true);
+  }, [runSync]);
+
+  const cancelPlainSync = useCallback(() => setPlainHitSync(null), []);
 
 
   const handleTranslate = useCallback(async () => {
@@ -752,6 +829,20 @@ export function useSongData(id: string): UseSongDataReturn {
         body: JSON.stringify({ title: spotify.track.name, artist: spotify.track.artist, spotify_track_id: spotify.track.id }),
       });
       const data = await res.json();
+      if (data.needsReview) {
+        // Low-confidence candidate — show the summary and ask before saving.
+        setImportReview({
+          title: spotify.track.name,
+          artist: spotify.track.artist,
+          spotifyTrackId: spotify.track.id,
+          source: data.source,
+          confidence: data.confidence,
+          lines: data.lines,
+          preview: data.preview,
+          synced: data.synced,
+        });
+        return;
+      }
       if (!res.ok || data.error) {
         const errorKey: Record<string, string> = {
           title_required: 'home.importTitleRequired',
@@ -773,6 +864,33 @@ export function useSongData(id: string): UseSongDataReturn {
       setImporting(false);
     }
   }, [router, t, showToast]);
+
+  /** Re-run the import with `confirm_review` after the user accepted the candidate. */
+  const confirmImportReview = useCallback(async () => {
+    if (!importReview) return;
+    setImporting(true);
+    try {
+      const res = await fetch('/api/songs/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: importReview.title, artist: importReview.artist, spotify_track_id: importReview.spotifyTrackId ?? '', confirm_review: true }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        setImportAlert({
+          message: t('song.importFailed'),
+          manualCreateUrl: buildManualCreateUrl(data),
+        });
+        return;
+      }
+      router.push(`/songs/${data.id}`);
+    } catch {
+      showToast('error', t('song.importFailed'));
+    } finally {
+      setImporting(false);
+      setImportReview(null);
+    }
+  }, [importReview, router, t, showToast]);
 
   // PiP is complex and needs external refs, so it's a callback the page calls with context
   const openPiP = useCallback(async (
@@ -944,6 +1062,7 @@ export function useSongData(id: string): UseSongDataReturn {
     cancelTranslate,
     furiganaLoading,
     furiganaError,
+    retryFurigana,
     lineTimestamps,
     syncing,
     importing,
@@ -961,6 +1080,9 @@ export function useSongData(id: string): UseSongDataReturn {
     setDeleteConfirm,
     importAlert,
     setImportAlert,
+    importReview,
+    setImportReview,
+    confirmImportReview,
     fontSize,
     setFontSize,
     toast,
@@ -969,6 +1091,9 @@ export function useSongData(id: string): UseSongDataReturn {
     lowConfidenceSync,
     confirmLowConfidenceSync,
     cancelLowConfidenceSync,
+    plainHitSync,
+    confirmPlainSync,
+    cancelPlainSync,
     handleDelete,
     confirmDelete,
     handleCopy,

@@ -38,7 +38,22 @@ interface TestResult {
 
 const EMPTY_FORM: FormConfig = { provider: '', base_url: '', api_key: '', model: '', target_lang: '', system_prompt: null };
 
-export default function TranslationConfigPanel() {
+/** Common target-language presets offered in the combobox; admins may still type a custom code. */
+const TARGET_LANG_PRESETS = [
+  { value: 'zh-CN', label: '简体中文 (zh-CN)' },
+  { value: 'zh-TW', label: '繁體中文（中國臺灣）(zh-TW)' },
+  { value: 'zh-HK', label: '繁體中文（中國香港）(zh-HK)' },
+  { value: 'en-US', label: 'English (en-US)' },
+] as const;
+
+/** Sentinel option value for the "custom target language" branch of the select. */
+const CUSTOM_LANG_OPTION = '__custom__';
+
+interface TranslationConfigPanelProps {
+  onConfigChange?: () => void;
+}
+
+export default function TranslationConfigPanel({ onConfigChange }: TranslationConfigPanelProps) {
   const { t } = useI18n();
   const [form, setForm] = useState<FormConfig>(EMPTY_FORM);
   const [effective, setEffective] = useState<StoredConfig | null>(null);
@@ -50,6 +65,7 @@ export default function TranslationConfigPanel() {
   const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [showKey, setShowKey] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [customLangSelected, setCustomLangSelected] = useState(false);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
 
   const showToast = useCallback((type: 'success' | 'error', msg: string) => {
@@ -117,12 +133,13 @@ export default function TranslationConfigPanel() {
       }
       applyResponse(await res.json());
       showToast('success', t('admin.translationSaved'));
+      onConfigChange?.();
     } catch (e) {
       showToast('error', e instanceof Error ? e.message : t('admin.translationSaveFailed'));
     } finally {
       setSaving(false);
     }
-  }, [form, defaultPrompt, applyResponse, showToast, t]);
+  }, [form, defaultPrompt, applyResponse, showToast, t, onConfigChange]);
 
   const handleClear = useCallback(async () => {
     setShowClearConfirm(false);
@@ -137,12 +154,13 @@ export default function TranslationConfigPanel() {
       applyResponse(await res.json());
       setTestResult(null);
       showToast('success', t('admin.translationCleared'));
+      onConfigChange?.();
     } catch {
       showToast('error', t('admin.translationSaveFailed'));
     } finally {
       setSaving(false);
     }
-  }, [applyResponse, showToast, t]);
+  }, [applyResponse, showToast, t, onConfigChange]);
 
   const handleTest = useCallback(async () => {
     setTesting(true);
@@ -181,6 +199,13 @@ export default function TranslationConfigPanel() {
         : effective?.provider || '—';
 
   const inputClass = 'w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm outline-none transition-colors focus:border-[var(--primary)]';
+
+  // Target language is a combobox: pick a common preset or select "Custom…" to type a free code.
+  const selectedTargetLangPreset = TARGET_LANG_PRESETS.find((p) => p.value === (form.target_lang ?? ''));
+  const hasCustomTargetLang = !selectedTargetLangPreset && (form.target_lang ?? '') !== '';
+  const targetLangSelectValue = selectedTargetLangPreset
+    ? selectedTargetLangPreset.value
+    : (customLangSelected || hasCustomTargetLang ? CUSTOM_LANG_OPTION : '');
 
   return (
     <div className="space-y-6">
@@ -263,7 +288,46 @@ export default function TranslationConfigPanel() {
               className={inputClass}
             />
           </label>
-          {form.provider !== 'workers-ai' && (
+          {/* Target language is a common field — always visible regardless of provider, so
+              Workers AI admins keep full control over the translation output language. */}
+          <label className="block">
+            <span className="mb-1 block text-xs text-[var(--muted-foreground)]">{t('admin.translationTargetLang')}</span>
+            <select
+              value={targetLangSelectValue}
+              onChange={(e) => {
+                if (e.target.value === CUSTOM_LANG_OPTION) {
+                  // Keep the current value and hand control to the custom input below.
+                  setCustomLangSelected(true);
+                  setTestResult(null);
+                } else {
+                  setCustomLangSelected(false);
+                  setField('target_lang', e.target.value);
+                }
+              }}
+              className={inputClass}
+            >
+              <option value="">{t('admin.translationTargetLangDefault')}</option>
+              {TARGET_LANG_PRESETS.map((p) => (
+                <option key={p.value} value={p.value}>{p.label}</option>
+              ))}
+              <option value={CUSTOM_LANG_OPTION}>{t('admin.translationTargetLangCustom')}</option>
+            </select>
+            {targetLangSelectValue === CUSTOM_LANG_OPTION && (
+              <input
+                value={form.target_lang ?? ''}
+                onChange={(e) => setField('target_lang', e.target.value)}
+                placeholder={effective?.target_lang ?? 'ja'}
+                className={`${inputClass} mt-1.5`}
+              />
+            )}
+            <span className="mt-1 block text-[11px] text-[var(--muted-foreground)]/70">{t('admin.translationTargetLangHint')}</span>
+          </label>
+          {form.provider === 'workers-ai' ? (
+            <p className="flex items-center gap-2 self-end rounded-md border border-[var(--border)] bg-[var(--accent)] px-3 py-2 text-xs text-[var(--muted-foreground)] sm:col-span-2">
+              <PlugZap className="h-3.5 w-3.5 shrink-0" />
+              {t('admin.translationWorkersAiBinding')}
+            </p>
+          ) : (
           <>
           <label className="block sm:col-span-2">
             <span className="mb-1 block text-xs text-[var(--muted-foreground)]">{t('admin.translationBaseUrl')}</span>
@@ -295,15 +359,6 @@ export default function TranslationConfigPanel() {
               </button>
             </div>
             <span className="mt-1 block text-[11px] text-[var(--muted-foreground)]/70">{t('admin.translationApiKeyHint')}</span>
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-xs text-[var(--muted-foreground)]">{t('admin.translationTargetLang')}</span>
-            <input
-              value={form.target_lang ?? ''}
-              onChange={(e) => setField('target_lang', e.target.value)}
-              placeholder={effective?.target_lang ?? 'zh-CN'}
-              className={inputClass}
-            />
           </label>
           </>
           )}

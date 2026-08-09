@@ -1,45 +1,70 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { v4 as uuidv4 } from 'uuid';
-import { getDB, schema, sql } from '@/lib/db';
-import { and, eq, or } from 'drizzle-orm';
+import { getDB, schema } from '@/lib/db';
+import { eq } from 'drizzle-orm';
 import { getAuthUser } from '@/lib/auth';
-import { getSpotifyTokenForUser } from '@/lib/spotify';
-import { fetchLyrics } from '@/lib/lyrics-fetcher';
+import {
+  PLAYLIST_CHUNK_SIZE,
+  PLAYLIST_MAX_TRACKS,
+  createJob,
+  existingResultsForChunk,
+  extractPlaylistId,
+  fetchPlaylistTracks,
+  finishJob,
+  getOwnedJob,
+  listTrackResults,
+  processTrack,
+  requireSpotifyToken,
+  saveTrackResult,
+  type PlaylistJobSummary,
+  type PlaylistTrack,
+} from '@/lib/playlist-import';
 
-interface SpotifyTrack {
-  id: string;
-  uri: string;
-  name: string;
-  duration_ms: number;
-  artists: { name: string }[];
-  album?: { name?: string; images?: { width?: number; url: string }[] };
-}
+export const dynamic = 'force-dynamic';
 
-interface PlaylistResponse {
-  items: { track: SpotifyTrack | null }[];
-  next: string | null;
-}
+/**
+ * Playlist import is now job-based instead of one giant HTTP request:
+ *
+ *  - `POST  /api/songs/import-playlist`  — resolve the Spotify playlist, create
+ *    a job and return its id. No lyrics fetching happens here.
+ *  - `PUT   /api/songs/import-playlist`  — process one chunk of up to
+ *    `PLAYLIST_CHUNK_SIZE` tracks, persist outcomes, return progress.
+ *  - `DELETE /api/songs/import-playlist` — cancel a job.
+ *
+ * A single Worker request is therefore bounded in time and subrequests; the
+ * client drives chunks and can resume after a timeout, cancel, or refresh.
+ */
 
-function extractPlaylistId(input: string): string | null {
-  const urlMatch = input.match(/spotify\.com\/playlist\/([a-zA-Z0-9]+)/);
-  if (urlMatch) return urlMatch[1];
-  const uriMatch = input.match(/spotify:playlist:([a-zA-Z0-9]+)/);
-  if (uriMatch) return uriMatch[1];
-  if (/^[a-zA-Z0-9]+$/.test(input)) return input;
-  return null;
-}
-
-interface TrackResult {
+interface PlaylistTrackResultDTO {
+  spotifyId: string;
   title: string;
   artist: string;
   status: 'imported' | 'skipped' | 'failed';
   source?: string;
   synced?: boolean;
+  needsReview?: boolean;
 }
 
-// POST /api/songs/import-playlist — batch import from Spotify playlist
+// GET — fetch the current state of a job plus all persisted per-track outcomes.
+// Used to rebuild the summary after a page refresh / resume.
+export async function GET(request: NextRequest) {
+  const user = await getAuthUser(request);
+  if (!user) {
+    return NextResponse.json({ error: 'login_required' }, { status: 401 });
+  }
+  const jobId = request.nextUrl.searchParams.get('jobId') || '';
+  if (!jobId) {
+    return NextResponse.json({ error: 'invalid_job' }, { status: 400 });
+  }
+  const job = await getOwnedJob(jobId, user.email);
+  if (!job) {
+    return NextResponse.json({ error: 'job_not_found' }, { status: 404 });
+  }
+  const tracks = await listTrackResults(jobId);
+  return NextResponse.json({ job, tracks });
+}
+
+// POST — create an import job (fetch playlist metadata only, no lyrics).
 export async function POST(request: NextRequest) {
-  const db = getDB();
   const user = await getAuthUser(request);
   if (!user) {
     return NextResponse.json({ error: 'login_required' }, { status: 401 });
@@ -51,129 +76,150 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'invalid_playlist_url' }, { status: 400 });
   }
 
-  const accessToken = await getSpotifyTokenForUser(user.email);
-  if (!accessToken) {
-    return NextResponse.json({ error: 'spotify_not_connected' }, { status: 401 });
-  }
-
-  // Fetch playlist tracks from Spotify
-  const tracks: { id: string; uri: string; title: string; artist: string; album: string; durationMs: number; coverUrl: string | null }[] = [];
-  let nextUrl: string | null = `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=100&fields=items(track(id,uri,name,duration_ms,artists(name),album(name,images(url,width)))),next`;
-
-  while (nextUrl) {
-    const spotifyRes = await fetch(nextUrl, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    if (!spotifyRes.ok) {
-      return NextResponse.json({ error: 'playlist_fetch_failed' }, { status: spotifyRes.status });
+  const accessToken = await requireSpotifyToken(user.email);
+  let tracks: PlaylistTrack[];
+  try {
+    tracks = await fetchPlaylistTracks(playlistId, accessToken);
+  } catch (error) {
+    const status = (error as Error & { status?: number }).status;
+    if (status && status !== 200) {
+      return NextResponse.json({ error: 'playlist_fetch_failed' }, { status });
     }
-    const data: PlaylistResponse = await spotifyRes.json();
-    for (const item of data.items || []) {
-      if (item.track?.id && item.track.name) {
-        tracks.push({
-          id: item.track.id,
-          uri: item.track.uri,
-          title: item.track.name,
-          artist: item.track.artists?.map((a) => a.name).join(', ') || '',
-          album: item.track.album?.name || '',
-          durationMs: item.track.duration_ms || 0,
-          coverUrl: item.track.album?.images?.reduce((best, image) =>
-            (image.width || 0) > (best.width || 0) ? image : best,
-            item.track.album.images[0],
-          )?.url || null,
-        });
-      }
-    }
-    nextUrl = data.next || null;
+    return NextResponse.json({ error: 'playlist_fetch_failed' }, { status: 502 });
   }
 
   if (tracks.length === 0) {
     return NextResponse.json({ error: 'playlist_empty' }, { status: 400 });
   }
 
-  // Look up Spotify display name once
+  const job = await createJob(user, playlistId, tracks);
+
+  return NextResponse.json({
+    job,
+    // Cap notice so large playlists degrade gracefully instead of timing out.
+    truncated: tracks.length >= PLAYLIST_MAX_TRACKS,
+    maxTracks: PLAYLIST_MAX_TRACKS,
+    chunkSize: PLAYLIST_CHUNK_SIZE,
+  });
+}
+
+// PUT — process one chunk of an existing job. Body: { jobId, offset }.
+// Resumable: tracks already saved are skipped; returns the next offset.
+export async function PUT(request: NextRequest) {
+  const user = await getAuthUser(request);
+  if (!user) {
+    return NextResponse.json({ error: 'login_required' }, { status: 401 });
+  }
+
+  const body = await request.json();
+  const jobId = typeof body.jobId === 'string' ? body.jobId : '';
+  const offset = Number.isFinite(body.offset) ? Math.max(0, Math.floor(body.offset)) : 0;
+  if (!jobId) {
+    return NextResponse.json({ error: 'invalid_job' }, { status: 400 });
+  }
+
+  const job = await getOwnedJob(jobId, user.email);
+  if (!job) {
+    return NextResponse.json({ error: 'job_not_found' }, { status: 404 });
+  }
+  if (job.status === 'completed') {
+    return NextResponse.json({ job, tracks: [], nextOffset: job.total, done: true });
+  }
+  if (job.status === 'cancelled') {
+    return NextResponse.json({ error: 'job_cancelled' }, { status: 409 });
+  }
+  if (job.status === 'failed') {
+    return NextResponse.json({ error: 'job_failed' }, { status: 409 });
+  }
+
+  const accessToken = await requireSpotifyToken(user.email);
+
+  // Resolve the playlist again on each chunk — a token refresh mid-import must
+  // not lose the track list, and D1 rows are cheap.
+  let tracks: PlaylistTrack[];
+  try {
+    tracks = await fetchPlaylistTracks(job.playlistId, accessToken);
+  } catch {
+    return NextResponse.json({ error: 'playlist_fetch_failed' }, { status: 502 });
+  }
+
+  if (offset >= tracks.length) {
+    await finishJob(jobId, 'completed');
+    const done = await getOwnedJob(jobId, user.email);
+    return NextResponse.json({ job: done, tracks: [], nextOffset: tracks.length, done: true });
+  }
+
+  // Idempotency: replay tracks whose outcome was already persisted. This is what
+  // makes a chunk that timed out mid-way resumable — already-saved tracks are
+  // replayed from the job's track table instead of re-fetching lyrics.
+  const alreadyDone = await existingResultsForChunk(jobId, tracks);
+
+  const chunk = tracks.slice(offset, offset + PLAYLIST_CHUNK_SIZE);
+  const trackResults: PlaylistTrackResultDTO[] = [];
+
+  const db = getDB();
   const nameRow = await db.select({ displayName: schema.spotifyAuth.displayName })
     .from(schema.spotifyAuth)
-    .where(sql`user_email = ${user.email}`)
+    .where(eq(schema.spotifyAuth.userEmail, user.email))
     .get();
   const createdByName = nameRow?.displayName || '';
 
-  // Import each track — allow failures, continue on error
-  const results: TrackResult[] = [];
-  let imported = 0, skipped = 0, failed = 0;
-
-  for (const track of tracks) {
-    // Skip duplicates
-    const duplicate = or(
-      eq(schema.songs.spotifyTrackId, track.id),
-      and(eq(schema.songs.title, track.title), eq(schema.songs.artist, track.artist)),
-    );
-    const visibleToUser = user.isAdmin
-      ? undefined
-      : or(eq(schema.songs.createdBy, user.email), eq(schema.songs.isPublic, 1));
-    const existing = await db.select({ id: schema.songs.id })
-      .from(schema.songs)
-      .where(visibleToUser ? and(duplicate, visibleToUser) : duplicate)
-      .get();
-
-    if (existing) {
-      results.push({ title: track.title, artist: track.artist, status: 'skipped' });
-      skipped++;
-      continue;
-    }
-
-    // Fetch lyrics from all sources — failure is non-fatal
-    let lyrics: { synced: string; plain: string } | null = null;
-    let source = '';
-    let confidence = 0;
-    try {
-      const r = await fetchLyrics(track.title, track.artist);
-      lyrics = r.result;
-      source = r.source;
-      confidence = r.confidence;
-    } catch (error) {
-      // Individual track failure — continue to next
-      console.warn(`[import-playlist] lyrics fetch failed for "${track.title}" — ${error instanceof Error ? error.message : String(error)}`);
-    }
-
-    try {
-      const id = uuidv4();
-      await db.insert(schema.songs).values({
-        id,
+  // Process the chunk; a timeout may fire mid-chunk, so persist each track's
+  // outcome as soon as it completes (saveTrackResult is idempotent).
+  for (const track of chunk) {
+    const persisted = alreadyDone.get(track.id);
+    if (persisted) {
+      // Already handled by an earlier request — replay the saved outcome.
+      trackResults.push({
+        spotifyId: track.id,
         title: track.title,
         artist: track.artist,
-        lyricsRaw: lyrics?.plain || '',
-        lyricsFurigana: '[]',
-        lyricsSynced: lyrics?.synced || '',
-        coverUrl: track.coverUrl,
-        spotifyTrackId: track.id,
-        spotifyUri: track.uri,
-        spotifyAlbum: track.album,
-        spotifyDurationMs: track.durationMs,
-        spotifyCanonicalTitle: track.title,
-        spotifyCanonicalArtist: track.artist,
-        lyricsSource: lyrics ? source : 'none',
-        lyricsConfidence: lyrics ? confidence : 0,
-        lyricsFetchedAt: lyrics ? new Date().toISOString() : null,
-        createdBy: user.email,
-        createdByName,
+        status: persisted.status,
+        ...(persisted.needsReview ? { needsReview: true } : {}),
       });
-
-      const synced = !!(lyrics?.synced);
-      results.push({ title: track.title, artist: track.artist, status: 'imported', source, synced });
-      imported++;
-    } catch (error) {
-      console.warn(`[import-playlist] failed to save "${track.title}" — ${error instanceof Error ? error.message : String(error)}`);
-      results.push({ title: track.title, artist: track.artist, status: 'failed' });
-      failed++;
+      continue;
     }
+    const result = await processTrack(user, createdByName, track);
+    await saveTrackResult(jobId, track, result);
+    trackResults.push({ spotifyId: track.id, title: track.title, artist: track.artist, ...result });
   }
 
+  // Resume cursor: advance past every track we just handled (whether fresh or
+  // already-done), so a subsequent request starts at the next unprocessed one.
+  const nextOffset = Math.min(tracks.length, offset + PLAYLIST_CHUNK_SIZE);
+  const isDone = nextOffset >= tracks.length;
+  if (isDone) {
+    await finishJob(jobId, 'completed');
+  }
+
+  const summary = await getOwnedJob(jobId, user.email);
   return NextResponse.json({
-    total: tracks.length,
-    imported,
-    skipped,
-    failed,
-    tracks: results,
+    job: summary,
+    tracks: trackResults,
+    nextOffset,
+    done: isDone,
   });
+}
+
+// DELETE — cancel a job (keeps already-imported songs; marks the job cancelled).
+export async function DELETE(request: NextRequest) {
+  const user = await getAuthUser(request);
+  if (!user) {
+    return NextResponse.json({ error: 'login_required' }, { status: 401 });
+  }
+  const { searchParams } = new URL(request.url);
+  const jobId = searchParams.get('jobId') || '';
+  if (!jobId) {
+    return NextResponse.json({ error: 'invalid_job' }, { status: 400 });
+  }
+
+  const job = await getOwnedJob(jobId, user.email);
+  if (!job) {
+    return NextResponse.json({ error: 'job_not_found' }, { status: 404 });
+  }
+  if (job.status !== 'completed') {
+    await finishJob(jobId, 'cancelled');
+  }
+  const summary: PlaylistJobSummary | null = await getOwnedJob(jobId, user.email);
+  return NextResponse.json({ job: summary });
 }

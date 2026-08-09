@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { Eraser } from 'lucide-react';
@@ -8,6 +8,7 @@ import SongForm from '@/components/SongForm';
 import Toast from '@/components/Toast';
 import { useI18n } from '@/lib/i18n';
 import { useCoverTheme } from '@/hooks/useCoverPalette';
+import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import type { ReadingScheme } from '@/lib/types';
 
 interface SongData {
@@ -41,15 +42,34 @@ export default function EditSongPage() {
   const [loading, setLoading] = useState(true);
   const [clearingKey, setClearingKey] = useState<SubDataKey | null>(null);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Form dirty state, reported by <SongForm>; drives the unsaved-changes guard
+  // for breadcrumbs, cancel, browser back/forward and unload. The dialog is
+  // rendered at the bottom of this page.
+  const [formDirty, setFormDirty] = useState(false);
+  const { dialog: unsavedDialog, guard: guardNavigate } = useUnsavedChangesGuard({
+    confirmHref: `/songs/${id}`,
+    dirty: formDirty,
+  });
 
   const coverTheme = useCoverTheme(song?.cover_url);
   const coverColor = coverTheme.palette;
   const songThemeStyle = coverTheme.style;
 
   const showToast = (type: 'success' | 'error', msg: string) => {
+    // Clear any pending timer from a previous toast so it cannot dismiss the new one early.
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     setToast({ type, msg });
-    setTimeout(() => setToast(null), 3000);
+    toastTimerRef.current = setTimeout(() => {
+      toastTimerRef.current = null;
+      setToast(null);
+    }, 3000);
   };
+
+  useEffect(() => () => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+  }, []);
 
   useEffect(() => {
     if (!id) return;
@@ -73,7 +93,11 @@ export default function EditSongPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (!res.ok) throw new Error(t('edit.saveFailed'));
+    if (!res.ok) {
+      const data = await res.json().catch(() => null) as { error?: string } | null;
+      if (data?.error === 'timestamps_not_ordered') throw new Error('timestamps_not_ordered');
+      throw new Error(t('edit.saveFailed'));
+    }
     return res.json() as Promise<{ id: string }>;
   };
 
@@ -150,6 +174,8 @@ export default function EditSongPage() {
         initialCoverUrl={song.cover_url ?? null}
         canManageCover
         onSave={handleSave}
+        onDirtyChange={setFormDirty}
+        guardNavigate={guardNavigate}
         cancelHref={`/songs/${id}`}
       />
 
@@ -186,6 +212,7 @@ export default function EditSongPage() {
       </section>
 
       {toast && <Toast type={toast.type} message={toast.msg} />}
+      {unsavedDialog}
     </div>
   );
 }
